@@ -98,7 +98,7 @@ fn run(cli: Cli, cwd: &Path, out: &mut dyn Write) -> Result<()> {
     match cli.command.unwrap_or(Command::Where) {
         Command::Where => print_selection(out, &selection, initialized),
         Command::Init => {
-            fs::create_dir_all(&selection.path)
+            create_dir_all_synced(&selection.path)
                 .with_context(|| format!("create store {}", selection.path.display()))?;
             let marker = selection.path.join(FORMAT_MARKER);
             match fs::OpenOptions::new()
@@ -106,7 +106,11 @@ fn run(cli: Cli, cwd: &Path, out: &mut dyn Write) -> Result<()> {
                 .create_new(true)
                 .open(&marker)
             {
-                Ok(mut file) => file.write_all(b"1\n")?,
+                Ok(mut file) => {
+                    file.write_all(b"1\n")?;
+                    file.sync_all()?;
+                    sync_directory(&selection.path)?;
+                }
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     marker_initialized(&selection.path)?;
                 }
@@ -150,8 +154,33 @@ fn validate_text(text: &str, what: &str) -> Result<()> {
     Ok(())
 }
 
+fn normalized_text(text: &str) -> &str {
+    text.trim_end_matches(' ')
+}
+
+fn sync_directory(path: &Path) -> Result<()> {
+    File::open(path)
+        .with_context(|| format!("open directory {} for sync", path.display()))?
+        .sync_all()
+        .with_context(|| format!("sync directory {}", path.display()))
+}
+
+fn create_dir_all_synced(path: &Path) -> Result<()> {
+    if path.exists() {
+        return Ok(());
+    }
+    let parent = path.parent().context("directory has no parent")?;
+    create_dir_all_synced(parent)?;
+    match fs::create_dir(path) {
+        Ok(()) => sync_directory(parent),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("create directory {}", path.display())),
+    }
+}
+
 fn locked_store(selection: &Selection) -> Result<File> {
     let path = selection.path.join("store.lock");
+    let existed = path.exists();
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -159,12 +188,20 @@ fn locked_store(selection: &Selection) -> Result<File> {
         .truncate(false)
         .open(&path)
         .with_context(|| format!("open {}", path.display()))?;
+    if !existed {
+        file.sync_all()?;
+        sync_directory(&selection.path)?;
+    }
     file.lock_exclusive()
         .with_context(|| format!("lock {}", path.display()))?;
     Ok(file)
 }
 
-fn open_repaired(path: &Path) -> Result<File> {
+fn open_repaired(
+    path: &Path,
+    validate_last: impl FnOnce(&mut File, u64) -> Result<()>,
+) -> Result<(File, bool)> {
+    let existed = path.exists();
     let mut file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -174,13 +211,16 @@ fn open_repaired(path: &Path) -> Result<File> {
         .with_context(|| format!("open {}", path.display()))?;
     let len = file.metadata()?.len();
     let complete = len / RECORD_BYTES * RECORD_BYTES;
+    if complete > 0 {
+        validate_last(&mut file, complete / RECORD_BYTES - 1)?;
+    }
     if len != complete {
         file.set_len(complete)
             .with_context(|| format!("repair torn suffix in {}", path.display()))?;
         file.sync_all()?;
     }
     file.seek(SeekFrom::Start(complete))?;
-    Ok(file)
+    Ok((file, !existed))
 }
 
 fn record(prefix: &str, text: &str) -> Result<[u8; RECORD_BYTES as usize]> {
@@ -196,11 +236,15 @@ fn record(prefix: &str, text: &str) -> Result<[u8; RECORD_BYTES as usize]> {
 }
 
 fn append_note(selection: &Selection, text: &str, out: &mut dyn Write) -> Result<()> {
+    let text = normalized_text(text);
     validate_text(text, "note")?;
     let _lock = locked_store(selection)?;
     let path = selection.path.join("notes.log");
-    let mut file = open_repaired(&path)?;
-    validate_notes(&mut file)?;
+    let (mut file, created) = open_repaired(&path, |file, id| {
+        parse_note(&read_slot(file, id)?, id)
+            .with_context(|| format!("malformed complete note record {id}"))?;
+        Ok(())
+    })?;
     let id = file.metadata()?.len() / RECORD_BYTES;
     if id > 9_999_999_999 {
         bail!("note ID exceeds the version-1 ten-digit limit")
@@ -209,12 +253,20 @@ fn append_note(selection: &Selection, text: &str, out: &mut dyn Write) -> Result
     file.seek(SeekFrom::End(0))?;
     file.write_all(&record(&prefix, text)?)?;
     file.sync_all()?;
+    if created {
+        sync_directory(&selection.path)?;
+    }
     writeln!(
         out,
         "noted {id} in {} ({})",
         selection.path.display(),
         selection.selector
     )?;
+    drop(file);
+    drop(_lock);
+    if let Err(error) = next_nap(selection, out) {
+        writeln!(out, "pending maintenance unavailable: {error:#}")?;
+    }
     Ok(())
 }
 
@@ -250,15 +302,6 @@ fn parse_note(slot: &[u8; RECORD_BYTES as usize], expected: u64) -> Result<Strin
 
 fn valid_date(date: &str) -> bool {
     chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_ok()
-}
-
-fn validate_notes(file: &mut File) -> Result<()> {
-    let count = file.metadata()?.len() / RECORD_BYTES;
-    for id in 0..count {
-        parse_note(&read_slot(file, id)?, id)
-            .with_context(|| format!("malformed complete note record {id}"))?;
-    }
-    Ok(())
 }
 
 fn note_count(selection: &Selection) -> Result<u64> {
@@ -319,6 +362,23 @@ fn request(out: &mut dyn Write, selection: &Selection, lo: u64, span: u64) -> Re
         selection.path.display(),
         selection.selector
     )?;
+    if span == 2 {
+        let mut notes = OpenOptions::new()
+            .read(true)
+            .open(selection.path.join("notes.log"))?;
+        for id in [lo, lo + 1] {
+            let text = parse_note(&read_slot(&mut notes, id)?, id)
+                .with_context(|| format!("malformed complete note record {id}"))?;
+            writeln!(out, "source {id}: {text}")?;
+        }
+    } else {
+        let half = span / 2;
+        for child in [lo, lo + half] {
+            let text = read_summary(selection, child, half)?
+                .context("internal error: requested summary has an unsettled child")?;
+            writeln!(out, "source {child}-{}: {text}", child + half - 1)?;
+        }
+    }
     writeln!(
         out,
         "next: memo --store {} nap {}-{} \"summary\"",
@@ -355,15 +415,18 @@ fn nap(
         };
         return next_nap(selection, out);
     }
-    let summary = summary.context("nap LO-HI requires a summary")?;
+    let summary = normalized_text(summary.context("nap LO-HI requires a summary")?);
     validate_text(summary, "summary")?;
     let (lo, hi, span) = parse_span(span_arg.unwrap())?;
     if hi > 9_999_999_999 {
         bail!("summary range exceeds the version-1 ten-digit limit")
     }
     let _lock = locked_store(selection)?;
-    let mut notes = open_repaired(&selection.path.join("notes.log"))?;
-    validate_notes(&mut notes)?;
+    let (notes, _) = open_repaired(&selection.path.join("notes.log"), |file, id| {
+        parse_note(&read_slot(file, id)?, id)
+            .with_context(|| format!("malformed complete note record {id}"))?;
+        Ok(())
+    })?;
     let total = notes.metadata()?.len() / RECORD_BYTES;
     if hi >= total {
         bail!("summary range ends beyond the last note ({total} notes)")
@@ -380,9 +443,15 @@ fn nap(
             }
         }
     }
-    fs::create_dir_all(selection.path.join("summaries"))?;
+    let summaries = selection.path.join("summaries");
+    create_dir_all_synced(&summaries)?;
     let path = summary_path(selection, span);
-    let mut file = open_repaired(&path)?;
+    let (mut file, created) = open_repaired(&path, |file, index| {
+        let old_lo = index * span;
+        parse_summary(&read_slot(file, index)?, old_lo, old_lo + span - 1)
+            .with_context(|| format!("malformed complete summary record in {}", path.display()))?;
+        Ok(())
+    })?;
     let index = lo / span;
     let count = file.metadata()?.len() / RECORD_BYTES;
     if index < count {
@@ -411,6 +480,9 @@ fn nap(
     file.seek(SeekFrom::End(0))?;
     file.write_all(&record(&prefix, summary)?)?;
     file.sync_all()?;
+    if created {
+        sync_directory(&summaries)?;
+    }
     writeln!(
         out,
         "settled {lo}-{hi} in {} ({})",
@@ -421,20 +493,43 @@ fn nap(
 }
 
 fn next_nap(selection: &Selection, out: &mut dyn Write) -> Result<()> {
-    let total = note_count(selection)?;
+    let _lock = locked_store(selection)?;
+    let notes_path = selection.path.join("notes.log");
+    let total = if notes_path.exists() {
+        let (notes, _) = open_repaired(&notes_path, |file, id| {
+            parse_note(&read_slot(file, id)?, id)
+                .with_context(|| format!("malformed complete note record {id}"))?;
+            Ok(())
+        })?;
+        notes.metadata()?.len() / RECORD_BYTES
+    } else {
+        0
+    };
     let mut span = 2;
-    while span <= total.next_power_of_two() {
-        for lo in (0..total).step_by(span as usize) {
-            if lo + span <= total
-                && read_summary(selection, lo, span)?.is_none()
-                && (span == 2
-                    || (read_summary(selection, lo, span / 2)?.is_some()
-                        && read_summary(selection, lo + span / 2, span / 2)?.is_some()))
-            {
-                return request(out, selection, lo, span);
-            }
+    while span <= total {
+        let path = summary_path(selection, span);
+        let count = if path.exists() {
+            let (file, _) = open_repaired(&path, |file, index| {
+                let lo = index * span;
+                parse_summary(&read_slot(file, index)?, lo, lo + span - 1).with_context(|| {
+                    format!("malformed complete summary record in {}", path.display())
+                })?;
+                Ok(())
+            })?;
+            file.metadata()?.len() / RECORD_BYTES
+        } else {
+            0
+        };
+        let available = total / span;
+        let children_ready = if span == 2 {
+            available
+        } else {
+            summary_dense_count(selection, span / 2)? / 2
+        };
+        if count < available && count < children_ready {
+            return request(out, selection, count * span, span);
         }
-        span *= 2;
+        span = span.checked_mul(2).context("summary span overflow")?;
     }
     writeln!(
         out,
@@ -443,6 +538,45 @@ fn next_nap(selection: &Selection, out: &mut dyn Write) -> Result<()> {
         selection.selector
     )?;
     Ok(())
+}
+
+fn summary_dense_count(selection: &Selection, span: u64) -> Result<u64> {
+    let path = summary_path(selection, span);
+    let mut file = match OpenOptions::new().read(true).open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error.into()),
+    };
+    let len = file.metadata()?.len();
+    if len % RECORD_BYTES != 0 {
+        bail!("summary log has a torn suffix: {}", path.display())
+    }
+    let count = len / RECORD_BYTES;
+    if count > 0 {
+        let index = count - 1;
+        let lo = index * span;
+        parse_summary(&read_slot(&mut file, index)?, lo, lo + span - 1)
+            .with_context(|| format!("malformed complete summary record in {}", path.display()))?;
+    }
+    Ok(count)
+}
+
+fn request_prerequisite(
+    out: &mut dyn Write,
+    selection: &Selection,
+    lo: u64,
+    span: u64,
+) -> Result<()> {
+    if span == 2 {
+        return request(out, selection, lo, span);
+    }
+    let half = span / 2;
+    for child in [lo, lo + half] {
+        if read_summary(selection, child, half)?.is_none() {
+            return request_prerequisite(out, selection, child, half);
+        }
+    }
+    request(out, selection, lo, span)
 }
 
 fn wake(selection: &Selection, budget: usize, out: &mut dyn Write) -> Result<()> {
@@ -493,7 +627,7 @@ fn wake(selection: &Selection, budget: usize, out: &mut dyn Write) -> Result<()>
         } else if let Some(text) = read_summary(selection, l, s)? {
             writeln!(out, "{l}-{}: {text}", l + s - 1)?
         } else {
-            request(out, selection, l, s)?;
+            request_prerequisite(out, selection, l, s)?;
             bail!("wake incomplete: required summary is pending")
         }
     }

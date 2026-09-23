@@ -25,6 +25,9 @@ uninitialized-store error. `init` is idempotent. An existing `FORMAT_VERSION`
 must be a regular file containing exactly `1\n`; malformed or unsupported
 markers fail all commands. `note` appends one memory, `wake` renders an aligned
 cover within its line budget, and `nap` records a requested power-of-two summary.
+`note` and no-argument `nap` eagerly show the next eligible maintenance request,
+including its two source texts. `wake` does not require all eager maintenance;
+it only requires the summaries in the cover selected for its line budget.
 When a required summary is absent, `wake` exits unsuccessfully and prints a
 store-pinned `nap` command. `--store project:<64-hex-id>` pins a project store
 independently of the current directory.
@@ -32,9 +35,11 @@ independently of the current directory.
 Version 1 stores local-calendar dates (`YYYY-MM-DD`). `notes.log` and each
 `summaries/<span>.log` are readable, append-only logs of 320-byte records
 (including LF), with ten-digit decimal IDs/ranges and space padding. Text is one
-nonempty line of at most 280 UTF-8 bytes. A per-store advisory lock serializes
+nonempty line of at most 280 UTF-8 bytes; trailing ASCII spaces are normalized
+before storage and retry comparison. A per-store advisory lock serializes
 writes; acknowledgements follow `fsync`. A torn final slot is truncated under
-that lock, while malformed complete records are errors. Summary levels are dense,
+that lock after validating the last complete slot, while malformed complete
+records are errors when accessed. Summary levels are dense,
 aligned, write-once prefixes: two-note summaries read raw notes and every larger
 summary requires its two child summaries. Identical retries are idempotent.
 

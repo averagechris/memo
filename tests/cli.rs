@@ -228,7 +228,7 @@ fn text_limits_and_uninitialized_store_are_strict() {
     assert!(stderr(memo(cwd, &home, &default_args(&["note", "x"]))).contains("not initialized"));
     assert!(!store.exists());
     stdout(memo(cwd, &home, &default_args(&["init"])));
-    for bad in ["", "two\nlines", "two\rlines"] {
+    for bad in ["", " ", "   ", "two\nlines", "two\rlines"] {
         assert!(
             stderr(memo(cwd, &home, &default_args(&["note", bad]))).contains("one nonempty line")
         );
@@ -244,6 +244,54 @@ fn text_limits_and_uninitialized_store_are_strict() {
     assert!(
         stderr(memo(cwd, &home, &default_args(&["nap", "0-1", &too_long])))
             .contains("280 UTF-8 bytes")
+    );
+}
+
+#[test]
+fn trailing_spaces_normalize_and_pending_requests_include_sources() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let cwd = fixture.path();
+    stdout(memo(cwd, &home, &default_args(&["init"])));
+    stdout(memo(cwd, &home, &default_args(&["note", "first   "])));
+    let noted = stdout(memo(cwd, &home, &default_args(&["note", "second"])));
+    assert!(noted.contains("source 0: first\nsource 1: second"));
+    assert!(noted.contains("memo --store default nap 0-1"));
+    stdout(memo(cwd, &home, &default_args(&["nap", "0-1", "both   "])));
+    assert!(
+        stdout(memo(cwd, &home, &default_args(&["nap", "0-1", "both"])))
+            .contains("already settled")
+    );
+}
+
+#[test]
+fn four_note_wake_guides_runnable_prerequisites_until_covered() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let cwd = fixture.path();
+    stdout(memo(cwd, &home, &default_args(&["init"])));
+    for text in ["a", "b", "c", "d"] {
+        stdout(memo(cwd, &home, &default_args(&["note", text])));
+    }
+
+    let first = memo(cwd, &home, &default_args(&["wake", "--lines", "1"]));
+    assert!(!first.status.success());
+    assert!(String::from_utf8(first.stdout).unwrap().contains("nap 0-1"));
+    stdout(memo(cwd, &home, &default_args(&["nap", "0-1", "ab"])));
+    let second = memo(cwd, &home, &default_args(&["wake", "--lines", "1"]));
+    assert!(
+        String::from_utf8(second.stdout)
+            .unwrap()
+            .contains("nap 2-3")
+    );
+    stdout(memo(cwd, &home, &default_args(&["nap", "2-3", "cd"])));
+    let parent = memo(cwd, &home, &default_args(&["wake", "--lines", "1"]));
+    let parent_out = String::from_utf8(parent.stdout).unwrap();
+    assert!(parent_out.contains("source 0-1: ab\nsource 2-3: cd"));
+    assert!(parent_out.contains("nap 0-3"));
+    stdout(memo(cwd, &home, &default_args(&["nap", "0-3", "all"])));
+    assert!(
+        stdout(memo(cwd, &home, &default_args(&["wake", "--lines", "1"]))).contains("0-3: all")
     );
 }
 
@@ -313,6 +361,54 @@ fn malformed_complete_note_and_missing_summary_children_are_errors() {
     bytes[2] = b'9';
     fs::write(&log, bytes).unwrap();
     assert!(stderr(memo(cwd, &home, &default_args(&["wake"]))).contains("malformed complete note"));
+}
+
+#[test]
+fn append_checks_only_the_final_complete_slot_before_tail_repair() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let cwd = fixture.path();
+    stdout(memo(cwd, &home, &default_args(&["init"])));
+    stdout(memo(cwd, &home, &default_args(&["note", "a"])));
+    stdout(memo(cwd, &home, &default_args(&["note", "b"])));
+    let log = home.join("data/memo/stores/default/notes.log");
+
+    let mut bytes = fs::read(&log).unwrap();
+    bytes[320 + 2] = b'9';
+    bytes.extend_from_slice(b"torn");
+    fs::write(&log, &bytes).unwrap();
+    let error = stderr(memo(cwd, &home, &default_args(&["note", "c"])));
+    assert!(error.contains("malformed complete note record 1"));
+    assert_eq!(fs::read(&log).unwrap(), bytes);
+
+    bytes.truncate(640);
+    bytes[320 + 2] = b'0';
+    bytes[2] = b'9';
+    fs::write(&log, bytes).unwrap();
+    stdout(memo(cwd, &home, &default_args(&["note", "c"])));
+    assert!(stderr(memo(cwd, &home, &default_args(&["wake"]))).contains("record 0"));
+}
+
+#[test]
+fn no_arg_nap_repairs_a_torn_summary_suffix_and_reprompts() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let cwd = fixture.path();
+    stdout(memo(cwd, &home, &default_args(&["init"])));
+    for text in ["a", "b", "c", "d"] {
+        stdout(memo(cwd, &home, &default_args(&["note", text])));
+    }
+    stdout(memo(cwd, &home, &default_args(&["nap", "0-1", "ab"])));
+    let summaries = home.join("data/memo/stores/default/summaries/2.log");
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&summaries)
+        .unwrap()
+        .write_all(b"torn")
+        .unwrap();
+    let pending = stdout(memo(cwd, &home, &default_args(&["nap"])));
+    assert!(pending.contains("nap 2-3"));
+    assert_eq!(fs::metadata(summaries).unwrap().len(), 320);
 }
 
 #[test]
