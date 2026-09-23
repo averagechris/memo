@@ -14,6 +14,18 @@ occupied there.
 
 Source code: [github.com/averagechris/memo](https://github.com/averagechris/memo)
 
+Inspired by [Victor Taelin's OptMem](https://github.com/VictorTaelin/OptMem).
+`memo` is an independent implementation with its own storage format and code.
+
+![Terminal demo: memo preserves two source notes while an agent supplies a compact summary](docs/demo.gif)
+
+The demo uses a temporary data directory. To recreate it, install
+[VHS](https://github.com/charmbracelet/vhs) and run
+`scripts/render-demo.sh`. You can select a binary with
+`VHS_BIN=/path/to/vhs scripts/render-demo.sh`. VHS 0.12.0 may exit without
+writing a GIF due to [vhs#787](https://github.com/charmbracelet/vhs/issues/787);
+VHS 0.11.0 is known to work.
+
 ## CI
 
 GitHub Actions runs the `fmt`, `clippy`, and `test` checks on pushes to `main`
