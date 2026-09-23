@@ -33,6 +33,7 @@ The staged route is in the [first-slice delivery plan](delivery-plan.md).
 - [Privacy and publication boundary](issues/04-privacy-and-publication-boundary.md): Keep personal data outside VCS and avoid automatic Git, SourceHut, upstream-source, and upstream-prompt actions.
 - [Project identity](issues/05-project-identity-across-workspaces.md): Hash the namespaced canonical shared VCS metadata path; shared workspaces match, while moving a repository changes identity.
 - [Package name and release path](issues/09-package-name-and-release-path.md): Use `memo` for the local Cargo package, binary, and fleet identity; do not publish to crates.io as part of this work because `memo` is occupied there.
+- [Output format contract](issues/10-output-format-contract.md): Use global `-o, --output-format text|json`, defaulting to text, with typed JSON success/error and incomplete-wake contracts while help/version remain text.
 - [Durable layout and crash repair](issues/06-layout-and-crash-repair.md): Use locked, fsynced 320-byte append-only records, truncate only torn suffixes, and reject malformed complete records.
 
 ## Not yet specified
