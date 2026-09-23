@@ -2,7 +2,7 @@
 name = "memo"
 version = "0.1.0"
 edition = "2024"
-description = "Personal memory for AI agents, written in Rust"
+description = "Persistent short notes and bounded recall for AI-agent workflows"
 authors = ["Christopher Cummings"]
 license = "MIT"
 repository = "https://git.sr.ht/~averagechris/memo"

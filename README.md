@@ -17,13 +17,15 @@ memo note "one line"
 memo wake --lines 96
 memo nap                           # print the next eligible, store-pinned request
 memo nap 0-1 "summary"
-memo skills                       # print the bundled OpenCode skill
-memo skills install               # install it globally for OpenCode
+memo skills                       # list bundled OpenCode skills
+memo skills show memo             # print the embedded skill Markdown
+memo skills install memo          # install one skill globally for OpenCode
 memo completions zsh              # print shell completions
 memo completions install fish     # install shell completions
 ```
 
-`memo skills install [--dir DIR] [--force]` writes only
+`memo skills install [NAME] [--dir DIR] [--force]` installs one named skill, or
+all bundled skills when NAME is omitted. Currently it writes only
 `DIR/memo/SKILL.md`; its default root is
 `${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills`. The directory name `memo`
 is the OpenCode skill ID.

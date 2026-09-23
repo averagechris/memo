@@ -89,9 +89,16 @@ fn skill_commands_are_embedded_installable_and_memory_independent() {
     fs::write(home.join("config/memo/config.toml"), "not toml = [").unwrap();
 
     let bundled = include_str!("../skills/memo/SKILL.md");
-    assert_eq!(stdout(memo(&cwd, &home, &["skills"])), bundled);
-    assert_eq!(stdout(memo(&cwd, &home, &["skills", "show"])), bundled);
-    stdout(memo(&cwd, &home, &["skills", "install"]));
+    let list = stdout(memo(&cwd, &home, &["skills"]));
+    assert!(list.contains("memo\t"));
+    assert!(list.contains("short persistent notes"));
+    assert!(!list.contains("# memo"));
+    assert_eq!(
+        stdout(memo(&cwd, &home, &["skills", "show", "memo"])),
+        bundled
+    );
+    assert!(stderr(memo(&cwd, &home, &["skills", "show", "unknown"])).contains("unknown skill"));
+    stdout(memo(&cwd, &home, &["skills", "install", "memo"]));
     let installed = home.join("config/opencode/skills/memo/SKILL.md");
     assert_eq!(fs::read_to_string(&installed).unwrap(), bundled);
     assert!(stderr(memo(&cwd, &home, &["skills", "install"])).contains("refusing to overwrite"));
@@ -305,15 +312,31 @@ fn config_and_flags_control_auto_selection() {
     )
     .unwrap();
 
-    assert!(stdout(memo(&repo, &home, &[])).contains("kind: default"));
-    assert!(stdout(memo(&repo, &home, &["--auto-project"])).contains("kind: project"));
+    assert!(stdout(memo(&repo, &home, &["where"])).contains("kind: default"));
+    assert!(stdout(memo(&repo, &home, &["--auto-project", "where"])).contains("kind: project"));
     fs::write(
         home.join("config/memo/config.toml"),
         "auto_project = true\n",
     )
     .unwrap();
-    assert!(stdout(memo(&repo, &home, &["--no-auto-project"])).contains("kind: default"));
-    assert!(stdout(memo(&repo, &home, &["--store", "default"])).contains("kind: default"));
+    assert!(stdout(memo(&repo, &home, &["--no-auto-project", "where"])).contains("kind: default"));
+    assert!(stdout(memo(&repo, &home, &["--store", "default", "where"])).contains("kind: default"));
+}
+
+#[test]
+fn bare_invocation_is_read_only_help_even_with_broken_configuration() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let cwd = fixture.path().join("broken");
+    fs::create_dir_all(cwd.join(".jj")).unwrap();
+    fs::create_dir_all(home.join("config/memo")).unwrap();
+    fs::write(home.join("config/memo/config.toml"), "broken = [").unwrap();
+    let help = stdout(memo(&cwd, &home, &[]));
+    for word in ["note", "wake", "nap"] {
+        assert!(help.contains(word));
+    }
+    assert!(!home.join("data").exists());
+    assert!(!help.contains("written in Rust"));
 }
 
 #[test]

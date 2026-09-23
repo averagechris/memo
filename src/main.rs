@@ -17,7 +17,13 @@ const MAX_TEXT_BYTES: usize = 280;
 const BUNDLED_SKILL: &str = include_str!("../skills/memo/SKILL.md");
 
 #[derive(Debug, Parser)]
-#[command(name = "memo", version, about)]
+#[command(
+    name = "memo",
+    version,
+    about = "Keep short persistent notes for agent workflows",
+    long_about = "Keep short persistent notes for agent workflows. Agents supply summaries with `nap`; `wake` reads a bounded view using those summaries. A project store is selected automatically inside a Git or jj repository; use `--store default` for notes that should follow you across projects.",
+    after_help = "Examples:\n  memo --store default init\n  memo note \"Prefer focused tests\"\n  memo wake --lines 24\n  memo where"
+)]
 struct Cli {
     /// Root directory containing memo stores.
     #[arg(long, env = "MEMO_DATA_DIR", global = true, value_parser = parse_data_dir)]
@@ -37,7 +43,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Show or install the bundled OpenCode skill.
+    /// List, show, or install bundled OpenCode skills.
     Skills {
         #[command(subcommand)]
         command: Option<SkillsCommand>,
@@ -49,16 +55,16 @@ enum Command {
     },
     /// Show the selected store without creating it.
     Where,
-    /// Initialize the selected store.
+    /// Create the selected store if it does not exist.
     Init,
-    /// Append one memory.
+    /// Append one short persistent note.
     Note { text: String },
-    /// Read the selected store, using summaries to fit the line budget.
+    /// Read notes and summaries within a line budget.
     Wake {
         #[arg(long, default_value_t = 96)]
         lines: usize,
     },
-    /// Show the next summary request, or settle one requested range.
+    /// Show or satisfy the next agent-supplied summary request.
     Nap {
         span: Option<String>,
         summary: Option<String>,
@@ -67,10 +73,13 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum SkillsCommand {
-    /// Print the bundled skill.
-    Show,
-    /// Install the bundled skill.
+    /// List known skill names and descriptions.
+    List,
+    /// Print a known skill's embedded Markdown.
+    Show { name: String },
+    /// Install one known skill, or all known skills when omitted.
     Install {
+        name: Option<String>,
         /// OpenCode skills directory (the memo subdirectory is added).
         #[arg(long)]
         dir: Option<PathBuf>,
@@ -134,7 +143,13 @@ struct Selection {
 }
 
 fn main() -> Result<()> {
-    run(Cli::parse(), &env::current_dir()?, &mut io::stdout())
+    let cli = Cli::parse();
+    if cli.command.is_none() {
+        Cli::command().print_help()?;
+        println!();
+        return Ok(());
+    }
+    run(cli, &env::current_dir()?, &mut io::stdout())
 }
 
 fn run(cli: Cli, cwd: &Path, out: &mut dyn Write) -> Result<()> {
@@ -209,10 +224,18 @@ fn run(cli: Cli, cwd: &Path, out: &mut dyn Write) -> Result<()> {
 
 fn run_skills(command: Option<&SkillsCommand>, cwd: &Path, out: &mut dyn Write) -> Result<()> {
     match command {
-        None | Some(SkillsCommand::Show) => {
-            out.write_all(BUNDLED_SKILL.as_bytes()).map_err(Into::into)
+        None | Some(SkillsCommand::List) => {
+            writeln!(
+                out,
+                "memo\tUse memo to keep and retrieve short persistent notes."
+            )?;
+            Ok(())
         }
-        Some(SkillsCommand::Install { dir, force }) => {
+        Some(SkillsCommand::Show { name }) => {
+            let contents = skill_contents(name)?;
+            out.write_all(contents.as_bytes()).map_err(Into::into)
+        }
+        Some(SkillsCommand::Install { name, dir, force }) => {
             let base = match dir {
                 Some(path) => absolute_destination(path, cwd),
                 None => absolute_env_path("XDG_CONFIG_HOME")
@@ -220,11 +243,27 @@ fn run_skills(command: Option<&SkillsCommand>, cwd: &Path, out: &mut dyn Write) 
                     .context("HOME or XDG_CONFIG_HOME must be set (or pass --dir)")?
                     .join("opencode/skills"),
             };
-            let path = base.join("memo/SKILL.md");
-            safe_write(&path, BUNDLED_SKILL.as_bytes(), *force)?;
-            writeln!(out, "installed {}", path.display())?;
+            let names = match name {
+                Some(name) => {
+                    skill_contents(name)?;
+                    vec![name.as_str()]
+                }
+                None => vec!["memo"],
+            };
+            for name in &names {
+                let path = base.join(name).join("SKILL.md");
+                safe_write(&path, skill_contents(name)?.as_bytes(), *force)?;
+                writeln!(out, "installed {}", path.display())?;
+            }
             Ok(())
         }
+    }
+}
+
+fn skill_contents(name: &str) -> Result<&'static str> {
+    match name {
+        "memo" => Ok(BUNDLED_SKILL),
+        _ => bail!("unknown skill {name:?}"),
     }
 }
 
