@@ -5,13 +5,9 @@ Use `jj` for version-control actions in this repository.
 ## Hosting status
 
 - GitHub is the canonical code host: https://github.com/averagechris/memo
-- GitHub pushes currently have no CI workflow. Run `jj lint` and the relevant
-  local Nix checks before handing off changes.
-- The SourceHut CI, release, and Pages manifests remain as dormant scaffolding.
-  They are not active for memo until someone deliberately provisions the
-  required SourceHut services and mirror.
-- Do not run release, tag, or build-submission apps, and do not describe the
-  SourceHut manifests as active, until that provisioning is complete.
+- GitHub pushes currently have no CI workflow. GitHub Actions CI will be added
+  separately. Run `jj lint` and the relevant local Nix checks before handing off
+  changes.
 
 ## Development
 
@@ -29,19 +25,8 @@ server.
 
 ## Release workflow
 
-The standard averagechris fleet interface remains available but dormant:
-
-```sh
-nix run .#prepare-release -- --version X.Y.Z
-nix run .#release-tag
-nix build .#release-artifact
-nix run .#static-checks
-nix run .#release -- --version X.Y.Z --submit-linux-build
-```
-
-Do not execute these release commands until the release backend is deliberately
-provisioned. Keep `builds/release-linux-x86_64.yml` outside `.builds/`; it is
-dormant explicit-submit scaffolding, not an active release path.
+No release automation or publication process is currently defined. Do not tag
+or publish a release without an approved process.
 
 ## Issue tracking
 
