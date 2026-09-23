@@ -7,9 +7,9 @@ implementation, publication, or release.
 
 ## Notes
 
-The repository now provides the bounded single-store `where`, `init`, `note`,
-`wake`, and `nap` loop, project-pinned selectors, and the verified version-1
-fixed-record layout. Review/undo and combined wake remain future work.
+The repository provides the bounded single-store `where`, `init`, `note`, `wake`,
+and `nap` loop, project-pinned selectors, and the verified version-1 fixed-record
+layout. Review/undo and combined wake remain future work.
 
 The XDG data root lives under the tool name, with an override. Personal data stays
 outside project VCS. The project must not automate Git, publish to SourceHut, or
@@ -27,7 +27,7 @@ The staged route is in the [first-slice delivery plan](delivery-plan.md).
 ## Decisions so far
 
 - [Store boundaries and selection](issues/01-store-boundaries-and-selection.md): Keep default-user, automatically selected project, and named stores physically separate; explicit store selection wins.
-- [Project markers and initialization](issues/02-project-markers-and-initialization.md): A recognized project marker with no initialized store is an error; only `init` creates a project store.
+- [Project markers and initialization](issues/02-project-markers-and-initialization.md): A recognized project marker with no initialized store is an error; only `init` creates a project store. The read-only diagnostic `where` is the exception and reports the selected path and `initialized: false`.
 - [Read and summary boundaries](issues/03-read-and-summary-boundaries.md): Ordinary reads use one selected store; a later labeled combined wake is opt-in and never persists a mixed summary.
 - [Privacy and publication boundary](issues/04-privacy-and-publication-boundary.md): Keep personal data outside VCS and avoid automatic Git, SourceHut, upstream-source, and upstream-prompt actions.
 - [Project identity](issues/05-project-identity-across-workspaces.md): Hash the namespaced canonical shared VCS metadata path; shared workspaces match, while moving a repository changes identity.
@@ -36,8 +36,9 @@ The staged route is in the [first-slice delivery plan](delivery-plan.md).
 
 ## Not yet specified
 
-- The exact command output, persistence schema, and verification matrix depend on the open decisions in `issues/`.
-- The package and release workflow must be settled before packaging work starts. Discovery does not publish anything.
+- [Review and summary undo](issues/07-review-and-summary-undo.md) remains open.
+- [Combined wake budget and default](issues/08-combined-wake-budget-and-default.md) remains open.
+- Any release or publishing plan remains subject to approval; this work does not authorize publication.
 
 ## Out of scope
 
