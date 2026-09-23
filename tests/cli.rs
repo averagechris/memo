@@ -7,6 +7,16 @@ use std::process::{Command, Output};
 
 use tempfile::TempDir;
 
+fn json(output: Output) -> serde_json::Value {
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
 fn memo(cwd: &Path, home: &Path, args: &[&str]) -> Output {
     memo_binary_data(
         Path::new(env!("CARGO_BIN_EXE_memo")),
@@ -806,4 +816,111 @@ fn project_pin_maps_workspace_and_survives_other_cwd() {
         ))
         .contains("shared")
     );
+}
+
+#[test]
+fn json_where_and_init_are_structured_with_global_option_in_either_position() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let cwd = fixture.path();
+    let before = json(memo(
+        cwd,
+        &home,
+        &["-o", "json", "--store", "default", "where"],
+    ));
+    assert_eq!(before["command"], "where");
+    assert_eq!(before["store"]["kind"], "default");
+    assert_eq!(before["store"]["initialized"], false);
+    let created = json(memo(
+        cwd,
+        &home,
+        &["--store", "default", "init", "-o", "json"],
+    ));
+    assert_eq!(created["created"], true);
+    let existing = json(memo(
+        cwd,
+        &home,
+        &["--store", "default", "-o", "json", "init"],
+    ));
+    assert_eq!(existing["created"], false);
+}
+
+#[test]
+fn json_memory_contract_preserves_typed_pending_and_atomic_incomplete_wake() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let cwd = fixture.path();
+    json(memo(
+        cwd,
+        &home,
+        &["-o", "json", "--store", "default", "init"],
+    ));
+    for text in ["a", "b", "c"] {
+        json(memo(
+            cwd,
+            &home,
+            &["-o", "json", "--store", "default", "note", text],
+        ));
+    }
+    let note = json(memo(
+        cwd,
+        &home,
+        &["-o", "json", "--store", "default", "note", "d"],
+    ));
+    assert_eq!(note["id"], 3);
+    assert_eq!(note["pending"]["sources"][0]["kind"], "note");
+    assert!(
+        note["pending"]["command"]
+            .as_str()
+            .unwrap()
+            .contains("--data-dir")
+    );
+    json(memo(
+        cwd,
+        &home,
+        &["-o", "json", "--store", "default", "nap", "0-1", "ab"],
+    ));
+    let failed = memo(
+        cwd,
+        &home,
+        &["-o", "json", "--store", "default", "wake", "--lines", "2"],
+    );
+    assert_eq!(failed.status.code(), Some(1));
+    assert!(failed.stdout.is_empty());
+    let error: serde_json::Value = serde_json::from_slice(&failed.stderr).unwrap();
+    assert_eq!(error["error"]["kind"], "wake_incomplete");
+    assert_eq!(error["error"]["items"][0]["text"], "ab");
+    assert_eq!(error["error"]["pending"]["sources"][0]["text"], "c");
+    let text = memo(cwd, &home, &["--store", "default", "wake", "--lines", "2"]);
+    assert!(!text.status.success());
+    assert!(
+        String::from_utf8(text.stdout)
+            .unwrap()
+            .starts_with("0-1: ab\n")
+    );
+}
+
+#[test]
+fn json_skills_completions_and_errors_do_not_leak_raw_output() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let cwd = fixture.path();
+    let skill = json(memo(cwd, &home, &["skills", "show", "memo", "-o", "json"]));
+    assert_eq!(skill["content"], include_str!("../skills/memo/SKILL.md"));
+    let completion = json(memo(cwd, &home, &["-o", "json", "completions", "zsh"]));
+    assert_eq!(completion["shell"], "zsh");
+    assert!(completion["content"].as_str().unwrap().contains("memo"));
+    let failed = memo(
+        cwd,
+        &home,
+        &["-o", "json", "--store", "default", "note", "x"],
+    );
+    assert!(failed.stdout.is_empty());
+    let error: serde_json::Value = serde_json::from_slice(&failed.stderr).unwrap();
+    assert_eq!(error["error"]["kind"], "runtime");
+    let usage = memo(cwd, &home, &["-o", "json", "--unknown"]);
+    assert_eq!(usage.status.code(), Some(2));
+    assert!(usage.stdout.is_empty());
+    let error: serde_json::Value = serde_json::from_slice(&usage.stderr).unwrap();
+    assert_eq!(error["error"]["kind"], "usage");
 }

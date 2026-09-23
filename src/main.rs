@@ -5,10 +5,11 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result, bail};
-use clap::{ArgAction, CommandFactory, Parser, Subcommand};
+use clap::{ArgAction, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use fs2::FileExt;
 use serde::Deserialize;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 const FORMAT_MARKER: &str = "FORMAT_VERSION";
@@ -25,6 +26,9 @@ const BUNDLED_SKILL: &str = include_str!("../skills/memo/SKILL.md");
     after_help = "Examples:\n  memo --store default init\n  memo note \"Prefer focused tests\"\n  memo wake --lines 24\n  memo where"
 )]
 struct Cli {
+    /// Choose human-readable text or structured JSON output.
+    #[arg(short = 'o', long, global = true, value_enum, default_value_t)]
+    output_format: OutputFormat,
     /// Root directory containing memo stores.
     #[arg(long, env = "MEMO_DATA_DIR", global = true, value_parser = parse_data_dir)]
     data_dir: Option<PathBuf>,
@@ -39,6 +43,13 @@ struct Cli {
     no_auto_project: bool,
     #[command(subcommand)]
     command: Option<Command>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, ValueEnum)]
+enum OutputFormat {
+    #[default]
+    Text,
+    Json,
 }
 
 #[derive(Debug, Subcommand)]
@@ -194,23 +205,60 @@ enum NapOutcome {
     AlreadySettled { lo: u64, hi: u64, text: String },
 }
 
-fn main() -> Result<()> {
-    let cli = Cli::parse();
+fn main() {
+    let args: Vec<_> = env::args_os().collect();
+    let json_requested = args
+        .windows(2)
+        .any(|w| (w[0] == "-o" || w[0] == "--output-format") && w[1] == "json")
+        || args.iter().any(|a| a == "--output-format=json");
+    let cli = match Cli::try_parse_from(&args) {
+        Ok(cli) => cli,
+        Err(error) => {
+            if json_requested
+                && !matches!(
+                    error.kind(),
+                    clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+                )
+            {
+                let value =
+                    json!({"ok":false,"error":{"kind":"usage","message":error.to_string()}});
+                eprintln!("{}", serde_json::to_string(&value).unwrap());
+                std::process::exit(2);
+            }
+            error.exit();
+        }
+    };
     if cli.command.is_none() {
-        Cli::command().print_help()?;
+        Cli::command().print_help().unwrap();
         println!();
-        return Ok(());
+        return;
     }
-    run(cli, &env::current_dir()?, &mut io::stdout())
+    let json = cli.output_format == OutputFormat::Json;
+    let result = run(cli, &env::current_dir().unwrap(), &mut io::stdout());
+    match result {
+        Ok(Some(value)) => println!("{}", serde_json::to_string(&value).unwrap()),
+        Ok(None) => {}
+        Err(error) if json => {
+            let value =
+                json!({"ok":false,"error":{"kind":"runtime","message":format!("{error:#}")}});
+            eprintln!("{}", serde_json::to_string(&value).unwrap());
+            std::process::exit(1);
+        }
+        Err(error) => {
+            eprintln!("Error: {error:#}");
+            std::process::exit(1);
+        }
+    }
 }
 
-fn run(cli: Cli, cwd: &Path, out: &mut dyn Write) -> Result<()> {
+fn run(cli: Cli, cwd: &Path, out: &mut dyn Write) -> Result<Option<Value>> {
+    let json_output = cli.output_format == OutputFormat::Json;
     match &cli.command {
         Some(Command::Skills { command }) => {
-            return run_skills(command.as_ref(), cwd, out);
+            return run_skills(command.as_ref(), cwd, out, json_output);
         }
         Some(Command::Completions { command }) => {
-            return run_completions(command, cwd, out);
+            return run_completions(command, cwd, out, json_output);
         }
         _ => {}
     }
@@ -229,12 +277,15 @@ fn run(cli: Cli, cwd: &Path, out: &mut dyn Write) -> Result<()> {
 
     match cli.command.unwrap_or(Command::Where) {
         Command::Skills { .. } | Command::Completions { .. } => unreachable!(),
-        Command::Where => print_selection(out, &selection, initialized),
+        Command::Where if json_output => Ok(Some(
+            json!({"command":"where","ok":true,"store":store_json(&selection, initialized)}),
+        )),
+        Command::Where => print_selection(out, &selection, initialized).map(|_| None),
         Command::Init => {
             create_dir_all_synced(&selection.path)
                 .with_context(|| format!("create store {}", selection.path.display()))?;
             let marker = selection.path.join(FORMAT_MARKER);
-            match fs::OpenOptions::new()
+            let created = match fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .open(&marker)
@@ -243,46 +294,99 @@ fn run(cli: Cli, cwd: &Path, out: &mut dyn Write) -> Result<()> {
                     file.write_all(b"1\n")?;
                     file.sync_all()?;
                     sync_directory(&selection.path)?;
+                    true
                 }
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     marker_initialized(&selection.path)?;
+                    false
                 }
                 Err(error) => {
                     return Err(error).with_context(|| format!("create {}", marker.display()));
                 }
+            };
+            if json_output {
+                Ok(Some(
+                    json!({"command":"init","ok":true,"store":store_json(&selection, true),"created":created}),
+                ))
+            } else {
+                print_selection(out, &selection, true).map(|_| None)
             }
-            print_selection(out, &selection, true)
         }
         Command::Note { text } => {
             require_initialized(&selection, &executable)?;
             let outcome = append_note(&selection, &executable, &text)?;
-            render_note(out, &selection, outcome)
+            if json_output {
+                let mut value = json!({"command":"note","ok":true,"id":outcome.id,"text":normalized_text(&text),"store":store_json(&selection, true),"pending":outcome.pending.as_ref().map(pending_json)});
+                if let Some(warning) = outcome.maintenance_warning {
+                    value["warning"] = json!(warning);
+                }
+                Ok(Some(value))
+            } else {
+                render_note(out, &selection, outcome).map(|_| None)
+            }
         }
         Command::Wake { lines } => {
             require_initialized(&selection, &executable)?;
             let outcome = wake(&selection, &executable, lines)?;
-            render_wake(out, &selection, outcome)
+            if json_output {
+                match outcome {
+                    WakeOutcome::Complete { items } => Ok(Some(
+                        json!({"command":"wake","ok":true,"lines":lines,"complete":true,"items":items.iter().map(wake_item_json).collect::<Vec<_>>(),"store":store_json(&selection, true)}),
+                    )),
+                    WakeOutcome::Incomplete {
+                        items_before_missing,
+                        pending,
+                    } => {
+                        let value = json!({"ok":false,"error":{"kind":"wake_incomplete","message":"wake incomplete: required summary is pending","pending":pending_json(&pending),"items":items_before_missing.iter().map(wake_item_json).collect::<Vec<_>>()}});
+                        eprintln!("{}", serde_json::to_string(&value)?);
+                        std::process::exit(1)
+                    }
+                }
+            } else {
+                render_wake(out, &selection, outcome).map(|_| None)
+            }
         }
         Command::Nap { span, summary } => {
             require_initialized(&selection, &executable)?;
             let outcome = nap(&selection, &executable, span.as_deref(), summary.as_deref())?;
-            render_nap(out, &selection, outcome)
+            if json_output {
+                Ok(Some(nap_json(&selection, outcome)))
+            } else {
+                render_nap(out, &selection, outcome).map(|_| None)
+            }
         }
     }
 }
 
-fn run_skills(command: Option<&SkillsCommand>, cwd: &Path, out: &mut dyn Write) -> Result<()> {
+fn run_skills(
+    command: Option<&SkillsCommand>,
+    cwd: &Path,
+    out: &mut dyn Write,
+    json_output: bool,
+) -> Result<Option<Value>> {
     match command {
         None | Some(SkillsCommand::List) => {
+            if json_output {
+                return Ok(Some(
+                    json!({"command":"skills","ok":true,"skills":[{"name":"memo","description":"Use memo to keep and retrieve short persistent notes."}]}),
+                ));
+            }
             writeln!(
                 out,
                 "memo\tUse memo to keep and retrieve short persistent notes."
             )?;
-            Ok(())
+            Ok(None)
         }
         Some(SkillsCommand::Show { name }) => {
             let contents = skill_contents(name)?;
-            out.write_all(contents.as_bytes()).map_err(Into::into)
+            if json_output {
+                Ok(Some(
+                    json!({"command":"skills show","ok":true,"name":name,"content":contents}),
+                ))
+            } else {
+                out.write_all(contents.as_bytes())?;
+                Ok(None)
+            }
         }
         Some(SkillsCommand::Install { name, dir, force }) => {
             let base = match dir {
@@ -299,12 +403,17 @@ fn run_skills(command: Option<&SkillsCommand>, cwd: &Path, out: &mut dyn Write) 
                 }
                 None => vec!["memo"],
             };
+            let mut installed = Vec::new();
             for name in &names {
                 let path = base.join(name).join("SKILL.md");
                 safe_write(&path, skill_contents(name)?.as_bytes(), *force)?;
-                writeln!(out, "installed {}", path.display())?;
+                if !json_output {
+                    writeln!(out, "installed {}", path.display())?;
+                }
+                installed.push(json!({"name":name,"path":path}));
             }
-            Ok(())
+            Ok(json_output
+                .then(|| json!({"command":"skills install","ok":true,"installed":installed})))
         }
     }
 }
@@ -316,13 +425,30 @@ fn skill_contents(name: &str) -> Result<&'static str> {
     }
 }
 
-fn run_completions(command: &CompletionsCommand, cwd: &Path, out: &mut dyn Write) -> Result<()> {
+fn run_completions(
+    command: &CompletionsCommand,
+    cwd: &Path,
+    out: &mut dyn Write,
+    json_output: bool,
+) -> Result<Option<Value>> {
+    let print = |shell: Shell, out: &mut dyn Write| -> Result<Option<Value>> {
+        if json_output {
+            let mut bytes = Vec::new();
+            generate_completion(shell, &mut bytes)?;
+            Ok(Some(
+                json!({"command":"completions","ok":true,"shell":shell.to_string(),"content":String::from_utf8(bytes)?}),
+            ))
+        } else {
+            generate_completion(shell, out)?;
+            Ok(None)
+        }
+    };
     match command {
-        CompletionsCommand::Bash => generate_completion(Shell::Bash, out),
-        CompletionsCommand::Zsh => generate_completion(Shell::Zsh, out),
-        CompletionsCommand::Fish => generate_completion(Shell::Fish, out),
-        CompletionsCommand::Elvish => generate_completion(Shell::Elvish, out),
-        CompletionsCommand::PowerShell => generate_completion(Shell::PowerShell, out),
+        CompletionsCommand::Bash => print(Shell::Bash, out),
+        CompletionsCommand::Zsh => print(Shell::Zsh, out),
+        CompletionsCommand::Fish => print(Shell::Fish, out),
+        CompletionsCommand::Elvish => print(Shell::Elvish, out),
+        CompletionsCommand::PowerShell => print(Shell::PowerShell, out),
         CompletionsCommand::Install { shell, dir, force } => {
             let (default_dir, filename) = completion_destination(*shell)?;
             let base = dir
@@ -334,11 +460,23 @@ fn run_completions(command: &CompletionsCommand, cwd: &Path, out: &mut dyn Write
             generate_completion(*shell, &mut bytes)?;
             let path = base.join(filename);
             safe_write(&path, &bytes, *force)?;
-            writeln!(out, "installed {}", path.display())?;
-            if *shell == Shell::Zsh {
-                writeln!(out, "ensure {} is in your zsh fpath", base.display())?;
+            if !json_output {
+                writeln!(out, "installed {}", path.display())?;
             }
-            Ok(())
+            let hint = (*shell == Shell::Zsh)
+                .then(|| format!("ensure {} is in your zsh fpath", base.display()));
+            if *shell == Shell::Zsh && !json_output {
+                writeln!(out, "{}", hint.as_ref().unwrap())?;
+            }
+            if json_output {
+                let mut value = json!({"command":"completions install","ok":true,"shell":shell.to_string(),"path":path});
+                if let Some(hint) = hint {
+                    value["hint"] = json!(hint);
+                }
+                Ok(Some(value))
+            } else {
+                Ok(None)
+            }
         }
     }
 }
@@ -921,6 +1059,57 @@ fn render_nap(out: &mut dyn Write, selection: &Selection, outcome: NapOutcome) -
                 selection.path.display()
             )
             .map_err(Into::into)
+        }
+    }
+}
+
+fn store_json(selection: &Selection, initialized: bool) -> Value {
+    let (kind, name) = match &selection.kind {
+        Kind::Default => ("default", None),
+        Kind::Project => ("project", None),
+        Kind::Named(name) => ("named", Some(name.as_str())),
+    };
+    let mut value = json!({
+        "kind": kind,
+        "selector": selection.selector,
+        "path": selection.path,
+        "initialized": initialized,
+    });
+    if let Some(name) = name {
+        value["name"] = json!(name);
+    }
+    value
+}
+
+fn pending_json(pending: &PendingRequest) -> Value {
+    json!({
+        "range":{"lo":pending.lo,"hi":pending.hi},
+        "sources":pending.sources.iter().map(|source| json!({
+            "kind":match source.kind { SourceKind::Note => "note", SourceKind::Summary => "summary" },
+            "lo":source.lo,"hi":source.hi,"text":source.text,
+        })).collect::<Vec<_>>(),
+        "command":pending.command,
+    })
+}
+
+fn wake_item_json(item: &WakeItem) -> Value {
+    json!({"kind":if item.lo == item.hi {"note"} else {"summary"},"lo":item.lo,"hi":item.hi,"text":item.text})
+}
+
+fn nap_json(selection: &Selection, outcome: NapOutcome) -> Value {
+    let store = store_json(selection, true);
+    match outcome {
+        NapOutcome::Pending(pending) => {
+            json!({"command":"nap","ok":true,"status":"pending","store":store,"pending":pending_json(&pending)})
+        }
+        NapOutcome::None => {
+            json!({"command":"nap","ok":true,"status":"none","store":store,"pending":null})
+        }
+        NapOutcome::Settled { lo, hi, text } => {
+            json!({"command":"nap","ok":true,"status":"settled","range":{"lo":lo,"hi":hi},"summary":text,"store":store})
+        }
+        NapOutcome::AlreadySettled { lo, hi, text } => {
+            json!({"command":"nap","ok":true,"status":"already_settled","range":{"lo":lo,"hi":hi},"summary":text,"store":store})
         }
     }
 }

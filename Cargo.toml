@@ -2,7 +2,7 @@
 name = "memo"
 version = "0.1.0"
 edition = "2024"
-description = "Persistent short notes and bounded recall for AI-agent workflows"
+description = "Persistent short notes and bounded wake summaries for AI-agent workflows"
 authors = ["Christopher Cummings"]
 license = "MIT"
 repository = "https://git.sr.ht/~averagechris/memo"
@@ -21,6 +21,7 @@ clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"
 fs2 = "0.4"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 sha2 = "0.10"
 toml = "0.9"
 

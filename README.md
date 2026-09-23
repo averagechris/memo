@@ -24,6 +24,40 @@ memo completions zsh              # print shell completions
 memo completions install fish     # install shell completions
 ```
 
+All subcommands accept the global `-o, --output-format text|json` option before
+or after the subcommand. Text is the default. Bare `memo`, help, and version
+output remain human-readable; embedded skill Markdown and printed completion
+scripts remain raw bytes in text mode.
+
+## Machine-readable output
+
+JSON mode emits one compact JSON object followed by LF. Success uses stdout,
+leaves stderr empty, and exits 0; runtime failures leave stdout empty, emit one
+error object on stderr, and exit 1. Usage errors selected with `-o json` use the
+same atomic stderr rule and exit 2. Every successful object includes `command`
+and `ok: true`; command-specific fields carry typed stores, ranges, sources,
+items, and install paths rather than wrapping rendered prose.
+
+```sh
+memo -o json --store default where
+# {"command":"where","ok":true,"store":{"initialized":false,"kind":"default",...}}
+
+memo note "Prefer focused tests" --output-format json
+# {"command":"note","ok":true,"id":0,"text":"Prefer focused tests",...}
+```
+
+An incomplete JSON `wake` is atomic: prior items and the typed pending request
+are included in the `wake_incomplete` error on stderr, while stdout stays empty.
+The pending request's `command` is executable- and store-pinned.
+
+## Project map
+
+The output-format boundary is resolved in the CLI child: storage operations
+return typed outcomes, and only the command edge chooses text rendering or
+structured JSON, preserving the version-1 record and locking implementation.
+
+Named project work is tracked in the [memo project tracker](https://todo.sr.ht/~averagechris/projects?search=repo%3Amemo).
+
 `memo skills install [NAME] [--dir DIR] [--force]` installs one named skill, or
 all bundled skills when NAME is omitted. Currently it writes only
 `DIR/memo/SKILL.md`; its default root is
