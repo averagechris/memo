@@ -40,6 +40,7 @@ cd "$repo_root"
 if [[ -f docs/demo.gif ]]; then
   cp docs/demo.gif "$demo_root/previous-demo.gif"
 fi
+rm -f docs/demo.gif
 "$vhs_bin" docs/demo.tape
 
 if [[ ! -s docs/demo.gif ]] || [[ $(LC_ALL=C head -c 6 docs/demo.gif) != "GIF89a" ]]; then
