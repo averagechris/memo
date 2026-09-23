@@ -142,6 +142,58 @@ struct Selection {
     selector: String,
 }
 
+#[derive(Debug, PartialEq)]
+enum SourceKind {
+    Note,
+    Summary,
+}
+
+#[derive(Debug, PartialEq)]
+struct SourceRecord {
+    kind: SourceKind,
+    lo: u64,
+    hi: u64,
+    text: String,
+}
+
+#[derive(Debug, PartialEq)]
+struct PendingRequest {
+    lo: u64,
+    hi: u64,
+    sources: Vec<SourceRecord>,
+    command: String,
+}
+
+struct NoteOutcome {
+    id: u64,
+    pending: Option<PendingRequest>,
+    maintenance_warning: Option<String>,
+}
+
+#[derive(Debug, PartialEq)]
+struct WakeItem {
+    lo: u64,
+    hi: u64,
+    text: String,
+}
+
+enum WakeOutcome {
+    Complete {
+        items: Vec<WakeItem>,
+    },
+    Incomplete {
+        items_before_missing: Vec<WakeItem>,
+        pending: PendingRequest,
+    },
+}
+
+enum NapOutcome {
+    Pending(PendingRequest),
+    None,
+    Settled { lo: u64, hi: u64, text: String },
+    AlreadySettled { lo: u64, hi: u64, text: String },
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     if cli.command.is_none() {
@@ -203,21 +255,18 @@ fn run(cli: Cli, cwd: &Path, out: &mut dyn Write) -> Result<()> {
         }
         Command::Note { text } => {
             require_initialized(&selection, &executable)?;
-            append_note(&selection, &executable, &text, out)
+            let outcome = append_note(&selection, &executable, &text)?;
+            render_note(out, &selection, outcome)
         }
         Command::Wake { lines } => {
             require_initialized(&selection, &executable)?;
-            wake(&selection, &executable, lines, out)
+            let outcome = wake(&selection, &executable, lines)?;
+            render_wake(out, &selection, outcome)
         }
         Command::Nap { span, summary } => {
             require_initialized(&selection, &executable)?;
-            nap(
-                &selection,
-                &executable,
-                span.as_deref(),
-                summary.as_deref(),
-                out,
-            )
+            let outcome = nap(&selection, &executable, span.as_deref(), summary.as_deref())?;
+            render_nap(out, &selection, outcome)
         }
     }
 }
@@ -491,12 +540,7 @@ fn record(prefix: &str, text: &str) -> Result<[u8; RECORD_BYTES as usize]> {
     Ok(slot)
 }
 
-fn append_note(
-    selection: &Selection,
-    executable: &Path,
-    text: &str,
-    out: &mut dyn Write,
-) -> Result<()> {
+fn append_note(selection: &Selection, executable: &Path, text: &str) -> Result<NoteOutcome> {
     let text = normalized_text(text);
     validate_text(text, "note")?;
     let _lock = locked_store(selection)?;
@@ -517,16 +561,34 @@ fn append_note(
     if created {
         sync_directory(&selection.path)?;
     }
+    drop(file);
+    drop(_lock);
+    let (pending, maintenance_warning) = match next_nap(selection, executable) {
+        Ok(NapOutcome::Pending(pending)) => (Some(pending), None),
+        Ok(NapOutcome::None) => (None, None),
+        Ok(_) => unreachable!("next_nap only returns pending or none"),
+        Err(error) => (None, Some(format!("{error:#}"))),
+    };
+    Ok(NoteOutcome {
+        id,
+        pending,
+        maintenance_warning,
+    })
+}
+
+fn render_note(out: &mut dyn Write, selection: &Selection, outcome: NoteOutcome) -> Result<()> {
     writeln!(
         out,
-        "noted {id} in {} ({})",
+        "noted {} in {} ({})",
+        outcome.id,
         selection.path.display(),
         selection.selector
     )?;
-    drop(file);
-    drop(_lock);
-    if let Err(error) = next_nap(selection, executable, out) {
-        writeln!(out, "pending maintenance unavailable: {error:#}")?;
+    if let Some(pending) = outcome.pending {
+        render_pending(out, selection, &pending)?;
+    }
+    if let Some(warning) = outcome.maintenance_warning {
+        writeln!(out, "pending maintenance unavailable: {warning}")?;
     }
     Ok(())
 }
@@ -620,12 +682,57 @@ fn read_summary(selection: &Selection, lo: u64, span: u64) -> Result<Option<Stri
         .with_context(|| format!("malformed complete summary record in {}", path.display()))
 }
 
-fn request(
+fn request(selection: &Selection, executable: &Path, lo: u64, span: u64) -> Result<PendingRequest> {
+    let sources = if span == 2 {
+        let mut notes = OpenOptions::new()
+            .read(true)
+            .open(selection.path.join("notes.log"))?;
+        [lo, lo + 1]
+            .into_iter()
+            .map(|id| {
+                let text = parse_note(&read_slot(&mut notes, id)?, id)
+                    .with_context(|| format!("malformed complete note record {id}"))?;
+                Ok(SourceRecord {
+                    kind: SourceKind::Note,
+                    lo: id,
+                    hi: id,
+                    text,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        let half = span / 2;
+        [lo, lo + half]
+            .into_iter()
+            .map(|child| {
+                let text = read_summary(selection, child, half)?
+                    .context("internal error: requested summary has an unsettled child")?;
+                Ok(SourceRecord {
+                    kind: SourceKind::Summary,
+                    lo: child,
+                    hi: child + half - 1,
+                    text,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?
+    };
+    let command = runnable_command(
+        executable,
+        selection,
+        &format!("nap {lo}-{} \"summary\"", lo + span - 1),
+    )?;
+    Ok(PendingRequest {
+        lo,
+        hi: lo + span - 1,
+        sources,
+        command,
+    })
+}
+
+fn render_pending(
     out: &mut dyn Write,
     selection: &Selection,
-    executable: &Path,
-    lo: u64,
-    span: u64,
+    pending: &PendingRequest,
 ) -> Result<()> {
     writeln!(
         out,
@@ -633,29 +740,14 @@ fn request(
         selection.path.display(),
         selection.selector
     )?;
-    if span == 2 {
-        let mut notes = OpenOptions::new()
-            .read(true)
-            .open(selection.path.join("notes.log"))?;
-        for id in [lo, lo + 1] {
-            let text = parse_note(&read_slot(&mut notes, id)?, id)
-                .with_context(|| format!("malformed complete note record {id}"))?;
-            writeln!(out, "source {id}: {text}")?;
-        }
-    } else {
-        let half = span / 2;
-        for child in [lo, lo + half] {
-            let text = read_summary(selection, child, half)?
-                .context("internal error: requested summary has an unsettled child")?;
-            writeln!(out, "source {child}-{}: {text}", child + half - 1)?;
+    for source in &pending.sources {
+        if source.lo == source.hi {
+            writeln!(out, "source {}: {}", source.lo, source.text)?;
+        } else {
+            writeln!(out, "source {}-{}: {}", source.lo, source.hi, source.text)?;
         }
     }
-    let command = runnable_command(
-        executable,
-        selection,
-        &format!("nap {lo}-{} \"summary\"", lo + span - 1),
-    )?;
-    writeln!(out, "next: {command}")?;
+    writeln!(out, "next: {}", pending.command)?;
     Ok(())
 }
 
@@ -678,13 +770,12 @@ fn nap(
     executable: &Path,
     span_arg: Option<&str>,
     summary: Option<&str>,
-    out: &mut dyn Write,
-) -> Result<()> {
+) -> Result<NapOutcome> {
     if span_arg.is_none() {
         if summary.is_some() {
             bail!("summary requires LO-HI")
         };
-        return next_nap(selection, executable, out);
+        return next_nap(selection, executable);
     }
     let summary = normalized_text(summary.context("nap LO-HI requires a summary")?);
     validate_text(summary, "summary")?;
@@ -728,12 +819,11 @@ fn nap(
     if index < count {
         let old = parse_summary(&read_slot(&mut file, index)?, lo, hi)?;
         if old == summary {
-            writeln!(
-                out,
-                "already settled {lo}-{hi} in {}",
-                selection.path.display()
-            )?;
-            return Ok(());
+            return Ok(NapOutcome::AlreadySettled {
+                lo,
+                hi,
+                text: summary.to_owned(),
+            });
         }
         bail!("summary {lo}-{hi} is already settled with different text")
     }
@@ -754,16 +844,14 @@ fn nap(
     if created {
         sync_directory(&summaries)?;
     }
-    writeln!(
-        out,
-        "settled {lo}-{hi} in {} ({})",
-        selection.path.display(),
-        selection.selector
-    )?;
-    Ok(())
+    Ok(NapOutcome::Settled {
+        lo,
+        hi,
+        text: summary.to_owned(),
+    })
 }
 
-fn next_nap(selection: &Selection, executable: &Path, out: &mut dyn Write) -> Result<()> {
+fn next_nap(selection: &Selection, executable: &Path) -> Result<NapOutcome> {
     let _lock = locked_store(selection)?;
     let notes_path = selection.path.join("notes.log");
     let total = if notes_path.exists() {
@@ -798,17 +886,43 @@ fn next_nap(selection: &Selection, executable: &Path, out: &mut dyn Write) -> Re
             summary_dense_count(selection, span / 2)? / 2
         };
         if count < available && count < children_ready {
-            return request(out, selection, executable, count * span, span);
+            return request(selection, executable, count * span, span).map(NapOutcome::Pending);
         }
         span = span.checked_mul(2).context("summary span overflow")?;
     }
-    writeln!(
-        out,
-        "no eligible summary pending in {} ({})",
-        selection.path.display(),
-        selection.selector
-    )?;
-    Ok(())
+    Ok(NapOutcome::None)
+}
+
+fn render_nap(out: &mut dyn Write, selection: &Selection, outcome: NapOutcome) -> Result<()> {
+    match outcome {
+        NapOutcome::Pending(pending) => render_pending(out, selection, &pending),
+        NapOutcome::None => writeln!(
+            out,
+            "no eligible summary pending in {} ({})",
+            selection.path.display(),
+            selection.selector
+        )
+        .map_err(Into::into),
+        NapOutcome::Settled { lo, hi, text } => {
+            drop(text);
+            writeln!(
+                out,
+                "settled {lo}-{hi} in {} ({})",
+                selection.path.display(),
+                selection.selector
+            )
+            .map_err(Into::into)
+        }
+        NapOutcome::AlreadySettled { lo, hi, text } => {
+            drop(text);
+            writeln!(
+                out,
+                "already settled {lo}-{hi} in {}",
+                selection.path.display()
+            )
+            .map_err(Into::into)
+        }
+    }
 }
 
 fn summary_dense_count(selection: &Selection, span: u64) -> Result<u64> {
@@ -833,30 +947,24 @@ fn summary_dense_count(selection: &Selection, span: u64) -> Result<u64> {
 }
 
 fn request_prerequisite(
-    out: &mut dyn Write,
     selection: &Selection,
     executable: &Path,
     lo: u64,
     span: u64,
-) -> Result<()> {
+) -> Result<PendingRequest> {
     if span == 2 {
-        return request(out, selection, executable, lo, span);
+        return request(selection, executable, lo, span);
     }
     let half = span / 2;
     for child in [lo, lo + half] {
         if read_summary(selection, child, half)?.is_none() {
-            return request_prerequisite(out, selection, executable, child, half);
+            return request_prerequisite(selection, executable, child, half);
         }
     }
-    request(out, selection, executable, lo, span)
+    request(selection, executable, lo, span)
 }
 
-fn wake(
-    selection: &Selection,
-    executable: &Path,
-    budget: usize,
-    out: &mut dyn Write,
-) -> Result<()> {
+fn wake(selection: &Selection, executable: &Path, budget: usize) -> Result<WakeOutcome> {
     if budget == 0 {
         bail!("--lines must be at least 1")
     }
@@ -896,25 +1004,60 @@ fn wake(
     } else {
         None
     };
+    let mut items = Vec::new();
     for (l, s) in blocks {
         if s == 1 {
             let text = parse_note(&read_slot(notes.as_mut().unwrap(), l)?, l)
                 .with_context(|| format!("malformed complete note record {l}"))?;
-            writeln!(out, "{l}: {text}")?
+            items.push(WakeItem { lo: l, hi: l, text });
         } else if let Some(text) = read_summary(selection, l, s)? {
-            writeln!(out, "{l}-{}: {text}", l + s - 1)?
+            items.push(WakeItem {
+                lo: l,
+                hi: l + s - 1,
+                text,
+            });
         } else {
-            request_prerequisite(out, selection, executable, l, s)?;
+            let pending = request_prerequisite(selection, executable, l, s)?;
+            return Ok(WakeOutcome::Incomplete {
+                items_before_missing: items,
+                pending,
+            });
+        }
+    }
+    Ok(WakeOutcome::Complete { items })
+}
+
+fn render_wake(out: &mut dyn Write, selection: &Selection, outcome: WakeOutcome) -> Result<()> {
+    let render_items = |out: &mut dyn Write, items: Vec<WakeItem>| -> Result<()> {
+        for item in items {
+            if item.lo == item.hi {
+                writeln!(out, "{}: {}", item.lo, item.text)?;
+            } else {
+                writeln!(out, "{}-{}: {}", item.lo, item.hi, item.text)?;
+            }
+        }
+        Ok(())
+    };
+    match outcome {
+        WakeOutcome::Complete { items } => {
+            render_items(out, items)?;
+            writeln!(
+                out,
+                "wake complete: {} ({})",
+                selection.path.display(),
+                selection.selector
+            )?;
+            Ok(())
+        }
+        WakeOutcome::Incomplete {
+            items_before_missing,
+            pending,
+        } => {
+            render_items(out, items_before_missing)?;
+            render_pending(out, selection, &pending)?;
             bail!("wake incomplete: required summary is pending")
         }
     }
-    writeln!(
-        out,
-        "wake complete: {} ({})",
-        selection.path.display(),
-        selection.selector
-    )?;
-    Ok(())
 }
 
 fn print_selection(out: &mut dyn Write, selection: &Selection, initialized: bool) -> Result<()> {
@@ -1246,5 +1389,48 @@ mod tests {
         );
         assert!(select(&root, temp.path(), Some("../bad"), true).is_err());
         assert!(select(&root, temp.path(), Some("project"), true).is_err());
+    }
+
+    #[test]
+    fn pending_requests_keep_typed_sources_and_pinned_commands() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("data root");
+        let selection = select(&root, temp.path(), Some("default"), false).unwrap();
+        fs::create_dir_all(&selection.path).unwrap();
+        fs::write(selection.path.join(FORMAT_MARKER), "1\n").unwrap();
+        let executable = temp.path().join("bin/memo");
+
+        for text in ["a", "b", "c", "d"] {
+            append_note(&selection, &executable, text).unwrap();
+        }
+
+        let notes = request(&selection, &executable, 0, 2).unwrap();
+        assert_eq!(notes.lo, 0);
+        assert_eq!(notes.hi, 1);
+        assert_eq!(notes.sources[0].kind, SourceKind::Note);
+        assert_eq!((notes.sources[0].lo, notes.sources[0].hi), (0, 0));
+        assert_eq!(notes.sources[0].text, "a");
+        assert_eq!(
+            notes.command,
+            runnable_command(&executable, &selection, "nap 0-1 \"summary\"").unwrap()
+        );
+
+        assert!(matches!(
+            nap(&selection, &executable, Some("0-1"), Some("ab")).unwrap(),
+            NapOutcome::Settled { .. }
+        ));
+        assert!(matches!(
+            nap(&selection, &executable, Some("2-3"), Some("cd")).unwrap(),
+            NapOutcome::Settled { .. }
+        ));
+        let parent = request(&selection, &executable, 0, 4).unwrap();
+        assert_eq!(parent.sources[0].kind, SourceKind::Summary);
+        assert_eq!((parent.sources[0].lo, parent.sources[0].hi), (0, 1));
+        assert_eq!(parent.sources[0].text, "ab");
+        assert_eq!((parent.sources[1].lo, parent.sources[1].hi), (2, 3));
+        assert_eq!(
+            parent.command,
+            runnable_command(&executable, &selection, "nap 0-3 \"summary\"").unwrap()
+        );
     }
 }
