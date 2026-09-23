@@ -96,6 +96,25 @@ fn skill_commands_are_embedded_installable_and_memory_independent() {
     assert_eq!(fs::read_to_string(&installed).unwrap(), bundled);
     assert!(stderr(memo(&cwd, &home, &["skills", "install"])).contains("refusing to overwrite"));
 
+    fs::write(&installed, "keep on failure").unwrap();
+    let install_dir = installed.parent().unwrap();
+    fs::set_permissions(install_dir, fs::Permissions::from_mode(0o555)).unwrap();
+    let failed = memo(&cwd, &home, &["skills", "install", "--force"]);
+    fs::set_permissions(install_dir, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(!failed.status.success());
+    assert_eq!(fs::read_to_string(&installed).unwrap(), "keep on failure");
+    assert_eq!(
+        fs::read_dir(install_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".memo-install-"))
+            .count(),
+        0
+    );
+
     let custom = fixture.path().join("custom");
     stdout(memo(
         &cwd,
@@ -128,6 +147,14 @@ fn completion_commands_generate_and_install_shell_filenames() {
     for shell in ["bash", "zsh", "fish", "elvish", "powershell"] {
         let script = stdout(memo(&cwd, &home, &["completions", shell]));
         assert!(script.contains("memo"), "empty {shell} completion");
+    }
+    let help = stdout(memo(&cwd, &home, &["completions", "--help"]));
+    for shell in ["bash", "zsh", "fish", "elvish", "powershell"] {
+        assert!(help.contains(shell), "missing {shell} from completion help");
+    }
+    let bash = stdout(memo(&cwd, &home, &["completions", "bash"]));
+    for shell in ["bash", "zsh", "fish", "elvish", "powershell"] {
+        assert!(bash.contains(shell), "missing {shell} from Bash candidates");
     }
     for (shell, path) in [
         ("bash", "data/bash-completion/completions/memo"),
@@ -648,7 +675,10 @@ fn zero_filled_note_slot_requires_valid_predecessor_without_mutating_failure() {
     fs::write(&log, &bytes).unwrap();
 
     let error = stderr(memo(cwd, &home, &default_args(&["note", "c"])));
-    assert!(error.contains("malformed complete note record 1"));
+    assert!(
+        error.contains("malformed complete note record 1"),
+        "unexpected stderr: {error}"
+    );
     assert_eq!(fs::read(&log).unwrap(), bytes);
 }
 

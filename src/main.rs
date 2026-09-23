@@ -2,6 +2,7 @@ use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result, bail};
 use clap::{ArgAction, CommandFactory, Parser, Subcommand};
@@ -81,9 +82,17 @@ enum SkillsCommand {
 
 #[derive(Debug, Subcommand)]
 enum CompletionsCommand {
-    /// Print a completion script.
-    #[command(external_subcommand)]
-    Generate(Vec<String>),
+    /// Print Bash completions.
+    Bash,
+    /// Print Zsh completions.
+    Zsh,
+    /// Print Fish completions.
+    Fish,
+    /// Print Elvish completions.
+    Elvish,
+    /// Print PowerShell completions.
+    #[command(name = "powershell")]
+    PowerShell,
     /// Install a completion script.
     Install {
         #[arg(value_enum)]
@@ -221,15 +230,11 @@ fn run_skills(command: Option<&SkillsCommand>, cwd: &Path, out: &mut dyn Write) 
 
 fn run_completions(command: &CompletionsCommand, cwd: &Path, out: &mut dyn Write) -> Result<()> {
     match command {
-        CompletionsCommand::Generate(values) => {
-            if values.len() != 1 {
-                bail!("completions requires a shell")
-            }
-            let shell: Shell = values[0]
-                .parse()
-                .map_err(|_| anyhow::anyhow!("unsupported shell {}", values[0]))?;
-            generate_completion(shell, out)
-        }
+        CompletionsCommand::Bash => generate_completion(Shell::Bash, out),
+        CompletionsCommand::Zsh => generate_completion(Shell::Zsh, out),
+        CompletionsCommand::Fish => generate_completion(Shell::Fish, out),
+        CompletionsCommand::Elvish => generate_completion(Shell::Elvish, out),
+        CompletionsCommand::PowerShell => generate_completion(Shell::PowerShell, out),
         CompletionsCommand::Install { shell, dir, force } => {
             let (default_dir, filename) = completion_destination(*shell)?;
             let base = dir
@@ -287,20 +292,43 @@ fn safe_write(path: &Path, contents: &[u8], force: bool) -> Result<()> {
         if metadata.is_dir() {
             bail!("refusing to replace directory {}", path.display())
         }
-        fs::remove_file(path).with_context(|| format!("remove {}", path.display()))?;
     }
     let parent = path.parent().context("destination has no parent")?;
     fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    let temporary = parent.join(format!(".memo-install-{}", std::process::id()));
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)
-        .with_context(|| format!("create {}", temporary.display()))?;
+    static TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
+    let temporary = loop {
+        let id = TEMPORARY_ID.fetch_add(1, Ordering::Relaxed);
+        let candidate = parent.join(format!(".memo-install-{}-{id}", std::process::id()));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => break (candidate, file),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error).with_context(|| format!("create {}", candidate.display()));
+            }
+        }
+    };
+    let (temporary, mut file) = temporary;
     let result = (|| -> Result<()> {
         file.write_all(contents)?;
         file.sync_all()?;
-        fs::rename(&temporary, path)?;
+        drop(file);
+        if force {
+            fs::rename(&temporary, path).with_context(|| format!("replace {}", path.display()))?;
+        } else {
+            fs::hard_link(&temporary, path).map_err(|error| {
+                if error.kind() == io::ErrorKind::AlreadyExists {
+                    anyhow::anyhow!("refusing to overwrite {}; pass --force", path.display())
+                } else {
+                    anyhow::Error::new(error).context(format!("install {}", path.display()))
+                }
+            })?;
+            fs::remove_file(&temporary)
+                .with_context(|| format!("remove {}", temporary.display()))?;
+        }
         sync_directory(parent)
     })();
     if result.is_err() {
