@@ -103,7 +103,7 @@
 
         meta = {
           description = package.description;
-          license = lib.licenses.mit;
+          license = lib.licenses.mitOrApache2;
           mainProgram = "memo";
         };
       };

@@ -142,3 +142,12 @@ direnv allow   # or: nix develop
 cargo test -q
 nix run .#static-checks
 ```
+
+
+## License
+
+`memo` is dual-licensed under either the [MIT license](LICENSE-MIT) or the
+[Apache License, Version 2.0](LICENSE-APACHE), at your option.
+
+Unless you explicitly state otherwise, contributions are dual-licensed under
+the same terms.
