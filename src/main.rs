@@ -74,6 +74,7 @@ enum Kind {
 #[derive(Debug)]
 struct Selection {
     kind: Kind,
+    data_root: PathBuf,
     path: PathBuf,
     selector: String,
 }
@@ -83,6 +84,7 @@ fn main() -> Result<()> {
 }
 
 fn run(cli: Cli, cwd: &Path, out: &mut dyn Write) -> Result<()> {
+    let executable = env::current_exe().context("resolve current executable")?;
     let config = read_config()?;
     let auto_project = if cli.auto_project {
         true
@@ -121,26 +123,32 @@ fn run(cli: Cli, cwd: &Path, out: &mut dyn Write) -> Result<()> {
             print_selection(out, &selection, true)
         }
         Command::Note { text } => {
-            require_initialized(&selection)?;
-            append_note(&selection, &text, out)
+            require_initialized(&selection, &executable)?;
+            append_note(&selection, &executable, &text, out)
         }
         Command::Wake { lines } => {
-            require_initialized(&selection)?;
-            wake(&selection, lines, out)
+            require_initialized(&selection, &executable)?;
+            wake(&selection, &executable, lines, out)
         }
         Command::Nap { span, summary } => {
-            require_initialized(&selection)?;
-            nap(&selection, span.as_deref(), summary.as_deref(), out)
+            require_initialized(&selection, &executable)?;
+            nap(
+                &selection,
+                &executable,
+                span.as_deref(),
+                summary.as_deref(),
+                out,
+            )
         }
     }
 }
 
-fn require_initialized(selection: &Selection) -> Result<()> {
+fn require_initialized(selection: &Selection, executable: &Path) -> Result<()> {
     if !marker_initialized(&selection.path)? {
+        let command = runnable_command(executable, selection, "init")?;
         bail!(
-            "selected store is not initialized: {} ({})\nrun: memo --store {} init",
+            "selected store is not initialized: {} ({})\nrun: {command}",
             selection.path.display(),
-            selection.selector,
             selection.selector
         )
     }
@@ -250,7 +258,12 @@ fn record(prefix: &str, text: &str) -> Result<[u8; RECORD_BYTES as usize]> {
     Ok(slot)
 }
 
-fn append_note(selection: &Selection, text: &str, out: &mut dyn Write) -> Result<()> {
+fn append_note(
+    selection: &Selection,
+    executable: &Path,
+    text: &str,
+    out: &mut dyn Write,
+) -> Result<()> {
     let text = normalized_text(text);
     validate_text(text, "note")?;
     let _lock = locked_store(selection)?;
@@ -279,7 +292,7 @@ fn append_note(selection: &Selection, text: &str, out: &mut dyn Write) -> Result
     )?;
     drop(file);
     drop(_lock);
-    if let Err(error) = next_nap(selection, out) {
+    if let Err(error) = next_nap(selection, executable, out) {
         writeln!(out, "pending maintenance unavailable: {error:#}")?;
     }
     Ok(())
@@ -374,7 +387,13 @@ fn read_summary(selection: &Selection, lo: u64, span: u64) -> Result<Option<Stri
         .with_context(|| format!("malformed complete summary record in {}", path.display()))
 }
 
-fn request(out: &mut dyn Write, selection: &Selection, lo: u64, span: u64) -> Result<()> {
+fn request(
+    out: &mut dyn Write,
+    selection: &Selection,
+    executable: &Path,
+    lo: u64,
+    span: u64,
+) -> Result<()> {
     writeln!(
         out,
         "summary pending for {} ({})",
@@ -398,13 +417,12 @@ fn request(out: &mut dyn Write, selection: &Selection, lo: u64, span: u64) -> Re
             writeln!(out, "source {child}-{}: {text}", child + half - 1)?;
         }
     }
-    writeln!(
-        out,
-        "next: memo --store {} nap {}-{} \"summary\"",
-        selection.selector,
-        lo,
-        lo + span - 1
+    let command = runnable_command(
+        executable,
+        selection,
+        &format!("nap {lo}-{} \"summary\"", lo + span - 1),
     )?;
+    writeln!(out, "next: {command}")?;
     Ok(())
 }
 
@@ -424,6 +442,7 @@ fn parse_span(value: &str) -> Result<(u64, u64, u64)> {
 
 fn nap(
     selection: &Selection,
+    executable: &Path,
     span_arg: Option<&str>,
     summary: Option<&str>,
     out: &mut dyn Write,
@@ -432,7 +451,7 @@ fn nap(
         if summary.is_some() {
             bail!("summary requires LO-HI")
         };
-        return next_nap(selection, out);
+        return next_nap(selection, executable, out);
     }
     let summary = normalized_text(summary.context("nap LO-HI requires a summary")?);
     validate_text(summary, "summary")?;
@@ -511,7 +530,7 @@ fn nap(
     Ok(())
 }
 
-fn next_nap(selection: &Selection, out: &mut dyn Write) -> Result<()> {
+fn next_nap(selection: &Selection, executable: &Path, out: &mut dyn Write) -> Result<()> {
     let _lock = locked_store(selection)?;
     let notes_path = selection.path.join("notes.log");
     let total = if notes_path.exists() {
@@ -546,7 +565,7 @@ fn next_nap(selection: &Selection, out: &mut dyn Write) -> Result<()> {
             summary_dense_count(selection, span / 2)? / 2
         };
         if count < available && count < children_ready {
-            return request(out, selection, count * span, span);
+            return request(out, selection, executable, count * span, span);
         }
         span = span.checked_mul(2).context("summary span overflow")?;
     }
@@ -583,22 +602,28 @@ fn summary_dense_count(selection: &Selection, span: u64) -> Result<u64> {
 fn request_prerequisite(
     out: &mut dyn Write,
     selection: &Selection,
+    executable: &Path,
     lo: u64,
     span: u64,
 ) -> Result<()> {
     if span == 2 {
-        return request(out, selection, lo, span);
+        return request(out, selection, executable, lo, span);
     }
     let half = span / 2;
     for child in [lo, lo + half] {
         if read_summary(selection, child, half)?.is_none() {
-            return request_prerequisite(out, selection, child, half);
+            return request_prerequisite(out, selection, executable, child, half);
         }
     }
-    request(out, selection, lo, span)
+    request(out, selection, executable, lo, span)
 }
 
-fn wake(selection: &Selection, budget: usize, out: &mut dyn Write) -> Result<()> {
+fn wake(
+    selection: &Selection,
+    executable: &Path,
+    budget: usize,
+    out: &mut dyn Write,
+) -> Result<()> {
     if budget == 0 {
         bail!("--lines must be at least 1")
     }
@@ -646,7 +671,7 @@ fn wake(selection: &Selection, budget: usize, out: &mut dyn Write) -> Result<()>
         } else if let Some(text) = read_summary(selection, l, s)? {
             writeln!(out, "{l}-{}: {text}", l + s - 1)?
         } else {
-            request_prerequisite(out, selection, l, s)?;
+            request_prerequisite(out, selection, executable, l, s)?;
             bail!("wake incomplete: required summary is pending")
         }
     }
@@ -670,6 +695,26 @@ fn print_selection(out: &mut dyn Write, selection: &Selection, initialized: bool
     writeln!(out, "initialized: {initialized}")?;
     writeln!(out, "selector: {}", selection.selector)?;
     Ok(())
+}
+
+fn runnable_command(executable: &Path, selection: &Selection, tail: &str) -> Result<String> {
+    Ok(format!(
+        "{} --data-dir {} --store {} {tail}",
+        shell_quote_path(executable)?,
+        shell_quote_path(&selection.data_root)?,
+        shell_quote(&selection.selector),
+    ))
+}
+
+fn shell_quote_path(path: &Path) -> Result<String> {
+    let value = path
+        .to_str()
+        .with_context(|| format!("path is not valid UTF-8: {}", path.display()))?;
+    Ok(shell_quote(value))
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn marker_initialized(store: &Path) -> Result<bool> {
@@ -750,6 +795,7 @@ fn select(root: &Path, cwd: &Path, requested: Option<&str>, auto: bool) -> Resul
         }
         return Ok(Selection {
             kind: Kind::Project,
+            data_root: root.to_path_buf(),
             path: root.join("projects").join(id),
             selector: format!("project:{id}"),
         });
@@ -784,6 +830,7 @@ fn select(root: &Path, cwd: &Path, requested: Option<&str>, auto: bool) -> Resul
     };
     Ok(Selection {
         kind,
+        data_root: root.to_path_buf(),
         path,
         selector,
     })

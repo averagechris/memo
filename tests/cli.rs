@@ -1,20 +1,61 @@
 use std::fs;
 use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Output};
 
 use tempfile::TempDir;
 
 fn memo(cwd: &Path, home: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_memo"))
+    memo_binary_data(
+        Path::new(env!("CARGO_BIN_EXE_memo")),
+        cwd,
+        home,
+        &home.join("data"),
+        args,
+    )
+}
+
+fn memo_binary_data(
+    binary: &Path,
+    cwd: &Path,
+    home: &Path,
+    data_home: &Path,
+    args: &[&str],
+) -> Output {
+    memo_binary_data_dir(binary, cwd, home, data_home, None, args)
+}
+
+fn memo_binary_override(
+    binary: &Path,
+    cwd: &Path,
+    home: &Path,
+    data_dir: &Path,
+    args: &[&str],
+) -> Output {
+    memo_binary_data_dir(binary, cwd, home, &home.join("data"), Some(data_dir), args)
+}
+
+fn memo_binary_data_dir(
+    binary: &Path,
+    cwd: &Path,
+    home: &Path,
+    data_home: &Path,
+    data_dir: Option<&Path>,
+    args: &[&str],
+) -> Output {
+    let mut command = Command::new(binary);
+    command
         .args(args)
         .current_dir(cwd)
         .env_clear()
         .env("HOME", home)
-        .env("XDG_DATA_HOME", home.join("data"))
-        .env("XDG_CONFIG_HOME", home.join("config"))
-        .output()
-        .unwrap()
+        .env("XDG_DATA_HOME", data_home)
+        .env("XDG_CONFIG_HOME", home.join("config"));
+    if let Some(data_dir) = data_dir {
+        command.env("MEMO_DATA_DIR", data_dir);
+    }
+    command.output().unwrap()
 }
 
 fn stdout(output: Output) -> String {
@@ -195,6 +236,134 @@ fn overrides_data_root_and_initializes_only_explicit_default() {
 }
 
 #[test]
+fn generated_commands_pin_executable_and_data_root() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let cwd = fixture.path().join("original cwd");
+    let other_cwd = fixture.path().join("other cwd");
+    let selected_root = fixture.path().join("selected root 'a'");
+    let fallback_data = fixture.path().join("fallback data");
+    let fallback_store = fallback_data.join("memo/stores/default");
+    fs::create_dir_all(&cwd).unwrap();
+    fs::create_dir_all(&other_cwd).unwrap();
+
+    let binary = fixture.path().join("bin dir/it's/memo");
+    fs::create_dir_all(binary.parent().unwrap()).unwrap();
+    fs::copy(env!("CARGO_BIN_EXE_memo"), &binary).unwrap();
+
+    stdout(memo_binary_override(
+        &binary,
+        &cwd,
+        &home,
+        &selected_root,
+        &["--store", "default", "init"],
+    ));
+    stdout(memo_binary_data(
+        &binary,
+        &cwd,
+        &home,
+        &fallback_data,
+        &["--store", "default", "init"],
+    ));
+    assert!(selected_root.join("default/FORMAT_VERSION").is_file());
+    assert!(fallback_store.join("FORMAT_VERSION").is_file());
+    stdout(memo_binary_override(
+        &binary,
+        &cwd,
+        &home,
+        &selected_root,
+        &["--store", "default", "note", "first"],
+    ));
+    stdout(memo_binary_override(
+        &binary,
+        &cwd,
+        &home,
+        &selected_root,
+        &["--store", "default", "note", "second"],
+    ));
+
+    let pending = stdout(memo_binary_override(
+        &binary,
+        &cwd,
+        &home,
+        &selected_root,
+        &["--store", "default", "nap"],
+    ));
+    let command = pending
+        .lines()
+        .find_map(|line| line.strip_prefix("next: "))
+        .unwrap();
+    assert!(command.contains("--data-dir '"));
+    assert!(command.contains("selected root '\\''a'"));
+    assert!(command.contains("bin dir/it'\\''s/memo"));
+
+    let fake_bin = fixture.path().join("fake bin");
+    fs::create_dir_all(&fake_bin).unwrap();
+    let fake_memo = fake_bin.join("memo");
+    let fake_called = fixture.path().join("fake memo called");
+    fs::write(
+        &fake_memo,
+        format!("#!/bin/sh\nprintf called > '{}'\n", fake_called.display()),
+    )
+    .unwrap();
+    fs::set_permissions(&fake_memo, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let executed = Command::new("/bin/sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(&other_cwd)
+        .env_clear()
+        .env("HOME", &home)
+        .env("XDG_DATA_HOME", &fallback_data)
+        .env("PATH", &fake_bin)
+        .output()
+        .unwrap();
+    assert!(
+        executed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&executed.stderr)
+    );
+    let summary = fs::read(selected_root.join("default/summaries/2.log")).unwrap();
+    assert!(
+        summary
+            .windows(b"summary".len())
+            .any(|window| window == b"summary")
+    );
+    assert!(!fallback_store.join("summaries").exists());
+    assert!(!fake_called.exists());
+
+    let error = stderr(memo_binary_override(
+        &binary,
+        &cwd,
+        &home,
+        &selected_root,
+        &["--store", "fresh", "note", "literal"],
+    ));
+    let init_command = error
+        .lines()
+        .find_map(|line| line.strip_prefix("run: "))
+        .unwrap();
+    let initialized = Command::new("/bin/sh")
+        .arg("-c")
+        .arg(init_command)
+        .current_dir(&other_cwd)
+        .env_clear()
+        .env("HOME", &home)
+        .env("XDG_DATA_HOME", &fallback_data)
+        .env("PATH", &fake_bin)
+        .output()
+        .unwrap();
+    assert!(
+        initialized.status.success(),
+        "{}",
+        String::from_utf8_lossy(&initialized.stderr)
+    );
+    assert!(selected_root.join("named/fresh/FORMAT_VERSION").is_file());
+    assert!(!fallback_store.join("named/fresh").exists());
+    assert!(!fake_called.exists());
+}
+
+#[test]
 fn note_nap_wake_roundtrip_and_scoped_pending_prompt() {
     let fixture = TempDir::new().unwrap();
     let home = fixture.path().join("home");
@@ -207,7 +376,7 @@ fn note_nap_wake_roundtrip_and_scoped_pending_prompt() {
     assert!(pending.contains("wake incomplete"));
     let project_independent =
         String::from_utf8(memo(cwd, &home, &default_args(&["nap"])).stdout).unwrap();
-    assert!(project_independent.contains("memo --store default nap 0-1"));
+    assert!(project_independent.contains("--store 'default' nap 0-1 \"summary\""));
 
     stdout(memo(
         cwd,
@@ -256,7 +425,7 @@ fn trailing_spaces_normalize_and_pending_requests_include_sources() {
     stdout(memo(cwd, &home, &default_args(&["note", "first   "])));
     let noted = stdout(memo(cwd, &home, &default_args(&["note", "second"])));
     assert!(noted.contains("source 0: first\nsource 1: second"));
-    assert!(noted.contains("memo --store default nap 0-1"));
+    assert!(noted.contains("--store 'default' nap 0-1 \"summary\""));
     stdout(memo(cwd, &home, &default_args(&["nap", "0-1", "both   "])));
     assert!(
         stdout(memo(cwd, &home, &default_args(&["nap", "0-1", "both"])))
@@ -493,7 +662,7 @@ fn project_pin_maps_workspace_and_survives_other_cwd() {
     stdout(memo(&main, &home, &["note", "from main"]));
     let pending =
         String::from_utf8(memo(&workspace, &home, &["wake", "--lines", "1"]).stdout).unwrap();
-    assert!(pending.contains(&format!("memo --store {selector} nap 0-1")));
+    assert!(pending.contains(&format!("--store '{selector}' nap 0-1 \"summary\"")));
     stdout(memo(
         fixture.path(),
         &home,
