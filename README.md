@@ -3,7 +3,7 @@
 `memo` keeps short, local context between agent sessions and human work. Use
 `note` to save a decision, environment quirk, or workflow lesson, `wake` to
 retrieve a bounded context window, and `nap` to record the summary an agent
-supplies when `wake` asks for one. `memo` makes no model calls.
+supplies when `note` or `wake` asks for one. `memo` makes no model calls.
 
 In a repository, `memo` selects a private project store in its data directory.
 That keeps project facts separate from cross-project facts. Use

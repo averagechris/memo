@@ -22,7 +22,7 @@ const BUNDLED_SKILL: &str = include_str!("../skills/memo/SKILL.md");
     name = "memo",
     version,
     about = "Keep decisions, environment quirks, and workflow lessons across agent sessions",
-    long_about = "memo keeps short, local context that agents and people can carry between sessions. Use `note` for a decision, environment quirk, or workflow lesson; `wake` retrieves a bounded context window; `nap` records the summary an agent supplies when `wake` asks for one. A repository gets a private project store in memo's data directory; use `--store default` for facts shared across projects. memo makes no model calls.",
+    long_about = "memo keeps short, local context that agents and people can carry between sessions. Use `note` for a decision, environment quirk, or workflow lesson; `wake` retrieves a bounded context window; `nap` records the summary an agent supplies when `note` or `wake` asks for one. A repository gets a private project store in memo's data directory; use `--store default` for facts shared across projects. memo makes no model calls.",
     after_help = "Examples:\n  memo init\n  memo note \"The API requires an idempotency key\"\n  memo wake --lines 24\n  memo nap\n  memo --store default init\n  memo --store default note \"Prefer focused tests\""
 )]
 struct Cli {
