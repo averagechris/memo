@@ -924,3 +924,71 @@ fn json_skills_completions_and_errors_do_not_leak_raw_output() {
     let error: serde_json::Value = serde_json::from_slice(&usage.stderr).unwrap();
     assert_eq!(error["error"]["kind"], "usage");
 }
+
+#[test]
+fn every_json_output_spelling_structures_usage_errors_in_global_positions() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let cwd = fixture.path();
+    let spellings: &[&[&str]] = &[
+        &["-o", "json"],
+        &["-ojson"],
+        &["-o=json"],
+        &["--output-format", "json"],
+        &["--output-format=json"],
+    ];
+
+    for spelling in spellings {
+        for args in [
+            spelling
+                .iter()
+                .copied()
+                .chain(["where", "--unknown"])
+                .collect::<Vec<_>>(),
+            ["where"]
+                .into_iter()
+                .chain(spelling.iter().copied())
+                .chain(["--unknown"])
+                .collect::<Vec<_>>(),
+        ] {
+            let output = memo(cwd, &home, &args);
+            assert_eq!(output.status.code(), Some(2), "args: {args:?}");
+            assert!(output.stdout.is_empty(), "args: {args:?}");
+            let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+            assert_eq!(error["error"]["kind"], "usage", "args: {args:?}");
+        }
+    }
+
+    let valid = json(memo(cwd, &home, &["-ojson", "where"]));
+    assert_eq!(valid["command"], "where");
+
+    for args in [
+        &["-o", "text", "--unknown"][..],
+        &["where", "--", "-ojson"][..],
+    ] {
+        let output = memo(cwd, &home, args);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(serde_json::from_slice::<serde_json::Value>(&output.stderr).is_err());
+    }
+}
+
+#[test]
+fn text_runtime_errors_preserve_the_context_chain() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let cwd = fixture.path();
+    stdout(memo(cwd, &home, &default_args(&["init"])));
+    stdout(memo(cwd, &home, &default_args(&["note", "a"])));
+    let log = home.join("data/memo/stores/default/notes.log");
+    let mut bytes = fs::read(&log).unwrap();
+    bytes[2] = b'9';
+    fs::write(log, bytes).unwrap();
+
+    let output = memo(cwd, &home, &default_args(&["wake"]));
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "Error: malformed complete note record 0\n\nCaused by:\n    note record ID/type does not match its slot\n"
+    );
+}

@@ -207,10 +207,7 @@ enum NapOutcome {
 
 fn main() {
     let args: Vec<_> = env::args_os().collect();
-    let json_requested = args
-        .windows(2)
-        .any(|w| (w[0] == "-o" || w[0] == "--output-format") && w[1] == "json")
-        || args.iter().any(|a| a == "--output-format=json");
+    let json_requested = json_output_requested(&args);
     let cli = match Cli::try_parse_from(&args) {
         Ok(cli) => cli,
         Err(error) => {
@@ -234,7 +231,9 @@ fn main() {
         return;
     }
     let json = cli.output_format == OutputFormat::Json;
-    let result = run(cli, &env::current_dir().unwrap(), &mut io::stdout());
+    let result = env::current_dir()
+        .context("resolve current directory")
+        .and_then(|cwd| run(cli, &cwd, &mut io::stdout()));
     match result {
         Ok(Some(value)) => println!("{}", serde_json::to_string(&value).unwrap()),
         Ok(None) => {}
@@ -245,10 +244,28 @@ fn main() {
             std::process::exit(1);
         }
         Err(error) => {
-            eprintln!("Error: {error:#}");
+            eprintln!("Error: {error:?}");
             std::process::exit(1);
         }
     }
+}
+
+fn json_output_requested(args: &[std::ffi::OsString]) -> bool {
+    let mut args = args.iter().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--" {
+            break;
+        }
+        if arg == "-ojson" || arg == "-o=json" || arg == "--output-format=json" {
+            return true;
+        }
+        if (arg == "-o" || arg == "--output-format")
+            && args.next().is_some_and(|value| value == "json")
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn run(cli: Cli, cwd: &Path, out: &mut dyn Write) -> Result<Option<Value>> {
