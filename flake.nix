@@ -1,5 +1,5 @@
 {
-  description = "Personal memory for AI agents, written in Rust";
+  description = "Keep decisions, environment quirks, and workflow lessons across agent sessions";
 
   nixConfig = {
     extra-substituters = ["https://averagechris-dotfiles.cachix.org"];

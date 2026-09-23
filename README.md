@@ -12,6 +12,8 @@ projects. The Cargo package and installed executable are both `memo`. The
 package is not intended for crates.io publication because `memo` is already
 occupied there.
 
+Source code: [github.com/averagechris/memo](https://github.com/averagechris/memo)
+
 ## Current commands
 
 ```sh

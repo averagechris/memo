@@ -1,5 +1,6 @@
 image: nixos/unstable
 arch: x86_64
+# DORMANT: this SourceHut release and Pages flow is not provisioned for memo.
 oauth: git.sr.ht/OBJECTS:RW git.sr.ht/REPOSITORIES:RO git.sr.ht/PROFILE:RO builds.sr.ht/JOBS:RW builds.sr.ht/SECRETS:RO builds.sr.ht/PROFILE:RO meta.sr.ht/PROFILE:RO pages.sr.ht/PAGES:RW
 secrets:
   - 731f7e55-4497-4228-8fa4-1657da7d3625 # cachix averagechris-dotfiles -> ~/.ci_secrets/cachix_token
@@ -12,7 +13,7 @@ environment:
     extra-substituters = https://averagechris-dotfiles.cachix.org
     extra-trusted-public-keys = averagechris-dotfiles.cachix.org-1:VwJkl5dG1+xGDY5x884mH/kVwwpgwBAdBKIF3BZiia4=
 sources:
-  - https://git.sr.ht/~averagechris/memo
+  - https://github.com/averagechris/memo
 tasks:
   - release-artifact: |
       set -eu

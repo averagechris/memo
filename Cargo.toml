@@ -5,8 +5,8 @@ edition = "2024"
 description = "Keep decisions, environment quirks, and workflow lessons across agent sessions"
 authors = ["Christopher Cummings"]
 license = "MIT"
-repository = "https://git.sr.ht/~averagechris/memo"
-homepage = "https://git.sr.ht/~averagechris/memo"
+repository = "https://github.com/averagechris/memo"
+homepage = "https://github.com/averagechris/memo"
 readme = "README.md"
 categories = ["command-line-utilities"]
 

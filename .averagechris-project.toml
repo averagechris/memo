@@ -2,7 +2,7 @@
 # This file is informational today; site registry updates are manual.
 [project]
 name = "memo"
-description = "Personal memory for AI agents, written in Rust"
+description = "Keep decisions, environment quirks, and workflow lessons across agent sessions"
 pages_subdir = "memo"
 srht_repo = "memo"
 artifact_prefix = "memo"
@@ -10,8 +10,6 @@ binaries = ["memo"]
 version_file = "Cargo.toml"
 homepage_tier = "more"
 downloads = true
-tracker = "https://todo.sr.ht/~averagechris/projects"
-tracker_label = "repo:memo"
 
 [pages]
 docs = ["overview.html", "examples.html", "demo.html", "changelog.html"]

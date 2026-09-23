@@ -1,5 +1,6 @@
 image: nixos/unstable
 arch: x86_64
+# DORMANT: this SourceHut manifest is not active until memo's CI is provisioned.
 # Keep this manifest lean: no image packages are needed for the generated checks.
 # If packages are later required on nixos/unstable, use channel-prefixed names
 # (for example, nixos.git); unprefixed names fail before tasks start.
@@ -11,7 +12,7 @@ environment:
     extra-substituters = https://averagechris-dotfiles.cachix.org
     extra-trusted-public-keys = averagechris-dotfiles.cachix.org-1:VwJkl5dG1+xGDY5x884mH/kVwwpgwBAdBKIF3BZiia4=
 sources:
-  - https://git.sr.ht/~averagechris/memo
+  - https://github.com/averagechris/memo
 tasks:
   - fmt: |
       cd memo
