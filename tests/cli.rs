@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -28,6 +29,12 @@ fn stdout(output: Output) -> String {
 fn stderr(output: Output) -> String {
     assert!(!output.status.success());
     String::from_utf8(output.stderr).unwrap()
+}
+
+fn default_args<'a>(extra: &'a [&'a str]) -> Vec<&'a str> {
+    let mut args = vec!["--store", "default"];
+    args.extend_from_slice(extra);
+    args
 }
 
 #[test]
@@ -185,4 +192,160 @@ fn overrides_data_root_and_initializes_only_explicit_default() {
     assert!(report.contains(&format!("path: {}/default", custom.display())));
     assert!(custom.join("default/FORMAT_VERSION").is_file());
     assert!(!custom.join("projects").exists());
+}
+
+#[test]
+fn note_nap_wake_roundtrip_and_scoped_pending_prompt() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let cwd = fixture.path();
+    stdout(memo(cwd, &home, &default_args(&["init"])));
+    stdout(memo(cwd, &home, &default_args(&["note", "first"])));
+    stdout(memo(cwd, &home, &default_args(&["note", "second"])));
+
+    let pending = stderr(memo(cwd, &home, &default_args(&["wake", "--lines", "1"])));
+    assert!(pending.contains("wake incomplete"));
+    let project_independent =
+        String::from_utf8(memo(cwd, &home, &default_args(&["nap"])).stdout).unwrap();
+    assert!(project_independent.contains("memo --store default nap 0-1"));
+
+    stdout(memo(
+        cwd,
+        &home,
+        &default_args(&["nap", "0-1", "both memories"]),
+    ));
+    let wake = stdout(memo(cwd, &home, &default_args(&["wake", "--lines", "1"])));
+    assert!(wake.contains("0-1: both memories"));
+    assert!(wake.contains("wake complete:"));
+}
+
+#[test]
+fn text_limits_and_uninitialized_store_are_strict() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let cwd = fixture.path();
+    let store = home.join("data/memo/stores/default");
+    assert!(stderr(memo(cwd, &home, &default_args(&["note", "x"]))).contains("not initialized"));
+    assert!(!store.exists());
+    stdout(memo(cwd, &home, &default_args(&["init"])));
+    for bad in ["", "two\nlines", "two\rlines"] {
+        assert!(
+            stderr(memo(cwd, &home, &default_args(&["note", bad]))).contains("one nonempty line")
+        );
+    }
+    let exact = "é".repeat(140);
+    stdout(memo(cwd, &home, &default_args(&["note", &exact])));
+    stdout(memo(cwd, &home, &default_args(&["note", "second"])));
+    stdout(memo(cwd, &home, &default_args(&["nap", "0-1", &exact])));
+    let too_long = format!("{exact}x");
+    assert!(
+        stderr(memo(cwd, &home, &default_args(&["note", &too_long]))).contains("280 UTF-8 bytes")
+    );
+    assert!(
+        stderr(memo(cwd, &home, &default_args(&["nap", "0-1", &too_long])))
+            .contains("280 UTF-8 bytes")
+    );
+}
+
+#[test]
+fn concurrent_notes_are_fixed_width_contiguous_and_torn_suffix_repairs() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let cwd = fixture.path();
+    stdout(memo(cwd, &home, &default_args(&["init"])));
+    let children: Vec<_> = (0..12)
+        .map(|i| {
+            Command::new(env!("CARGO_BIN_EXE_memo"))
+                .args(["--store", "default", "note", &format!("note {i}")])
+                .current_dir(cwd)
+                .env_clear()
+                .env("HOME", &home)
+                .env("XDG_DATA_HOME", home.join("data"))
+                .env("XDG_CONFIG_HOME", home.join("config"))
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+    for mut child in children {
+        assert!(child.wait().unwrap().success());
+    }
+    let log = home.join("data/memo/stores/default/notes.log");
+    let bytes = fs::read(&log).unwrap();
+    assert_eq!(bytes.len(), 12 * 320);
+    for (id, slot) in bytes.as_chunks::<320>().0.iter().enumerate() {
+        assert!(
+            std::str::from_utf8(slot)
+                .unwrap()
+                .starts_with(&format!("N {id:010} "))
+        );
+    }
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&log)
+        .unwrap()
+        .write_all(b"torn")
+        .unwrap();
+    stdout(memo(cwd, &home, &default_args(&["note", "after repair"])));
+    let bytes = fs::read(&log).unwrap();
+    assert_eq!(bytes.len(), 13 * 320);
+    assert!(
+        std::str::from_utf8(&bytes[12 * 320..])
+            .unwrap()
+            .starts_with("N 0000000012 ")
+    );
+}
+
+#[test]
+fn malformed_complete_note_and_missing_summary_children_are_errors() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let cwd = fixture.path();
+    stdout(memo(cwd, &home, &default_args(&["init"])));
+    for text in ["a", "b", "c", "d"] {
+        stdout(memo(cwd, &home, &default_args(&["note", text])));
+    }
+    assert!(
+        stderr(memo(cwd, &home, &default_args(&["nap", "0-3", "parent"])))
+            .contains("requires child")
+    );
+    let log = home.join("data/memo/stores/default/notes.log");
+    let mut bytes = fs::read(&log).unwrap();
+    bytes[2] = b'9';
+    fs::write(&log, bytes).unwrap();
+    assert!(stderr(memo(cwd, &home, &default_args(&["wake"]))).contains("malformed complete note"));
+}
+
+#[test]
+fn project_pin_maps_workspace_and_survives_other_cwd() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let main = fixture.path().join("main");
+    let workspace = fixture.path().join("bay");
+    fs::create_dir_all(main.join(".jj/repo")).unwrap();
+    fs::create_dir_all(workspace.join(".jj")).unwrap();
+    fs::write(workspace.join(".jj/repo"), "../../main/.jj/repo\n").unwrap();
+    let initialized = stdout(memo(&main, &home, &["init"]));
+    let selector = initialized
+        .lines()
+        .find_map(|l| l.strip_prefix("selector: "))
+        .unwrap()
+        .to_owned();
+    stdout(memo(&workspace, &home, &["note", "from bay"]));
+    stdout(memo(&main, &home, &["note", "from main"]));
+    let pending =
+        String::from_utf8(memo(&workspace, &home, &["wake", "--lines", "1"]).stdout).unwrap();
+    assert!(pending.contains(&format!("memo --store {selector} nap 0-1")));
+    stdout(memo(
+        fixture.path(),
+        &home,
+        &["--store", &selector, "nap", "0-1", "shared"],
+    ));
+    assert!(
+        stdout(memo(
+            fixture.path(),
+            &home,
+            &["--store", &selector, "wake", "--lines", "1"]
+        ))
+        .contains("shared")
+    );
 }

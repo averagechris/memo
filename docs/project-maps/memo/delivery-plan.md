@@ -25,6 +25,10 @@ failed write cannot silently create or corrupt a store.
 Depends on [layout and repair](issues/06-layout-and-crash-repair.md) and
 [review and undo](issues/07-review-and-summary-undo.md).
 
+The durable layout and bounded note/wake/nap loop are implemented. Summary
+review/undo remains open in issue 07 and is intentionally not implied by the
+write-once first slice.
+
 ## 3. Combined view
 
 Add the later opt-in, explicitly labeled combined wake. Define its eligible stores

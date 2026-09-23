@@ -7,9 +7,9 @@ implementation, publication, or release.
 
 ## Notes
 
-The repository now provides `memo where` and `memo init`, store selection,
-repository identity, and the version-1 initialization marker. Memory commands
-and their durable record layout remain future work.
+The repository now provides the bounded single-store `where`, `init`, `note`,
+`wake`, and `nap` loop, project-pinned selectors, and the verified version-1
+fixed-record layout. Review/undo and combined wake remain future work.
 
 The XDG data root lives under the tool name, with an override. Personal data stays
 outside project VCS. The project must not automate Git, publish to SourceHut, or
@@ -32,6 +32,7 @@ The staged route is in the [first-slice delivery plan](delivery-plan.md).
 - [Privacy and publication boundary](issues/04-privacy-and-publication-boundary.md): Keep personal data outside VCS and avoid automatic Git, SourceHut, upstream-source, and upstream-prompt actions.
 - [Project identity](issues/05-project-identity-across-workspaces.md): Hash the namespaced canonical shared VCS metadata path; shared workspaces match, while moving a repository changes identity.
 - [Package name and release path](issues/09-package-name-and-release-path.md): Use Cargo package `memo-cli` with binary/fleet identity `memo`; do not publish as part of this work.
+- [Durable layout and crash repair](issues/06-layout-and-crash-repair.md): Use locked, fsynced 320-byte append-only records, truncate only torn suffixes, and reject malformed complete records.
 
 ## Not yet specified
 
