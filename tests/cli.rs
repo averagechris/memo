@@ -364,6 +364,49 @@ fn malformed_complete_note_and_missing_summary_children_are_errors() {
 }
 
 #[test]
+fn zero_filled_final_note_slots_are_repaired() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let cwd = fixture.path();
+    stdout(memo(cwd, &home, &default_args(&["init"])));
+    stdout(memo(cwd, &home, &default_args(&["note", "before"])));
+    let log = home.join("data/memo/stores/default/notes.log");
+    let mut bytes = fs::read(&log).unwrap();
+    bytes.extend_from_slice(&[0; 640]);
+    bytes.extend_from_slice(b"torn");
+    fs::write(&log, bytes).unwrap();
+
+    stdout(memo(cwd, &home, &default_args(&["note", "after"])));
+    let bytes = fs::read(&log).unwrap();
+    assert_eq!(bytes.len(), 2 * 320);
+    assert!(
+        std::str::from_utf8(&bytes[320..])
+            .unwrap()
+            .starts_with("N 0000000001 ")
+    );
+}
+
+#[test]
+fn zero_filled_note_slot_requires_valid_predecessor_without_mutating_failure() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let cwd = fixture.path();
+    stdout(memo(cwd, &home, &default_args(&["init"])));
+    for text in ["a", "b"] {
+        stdout(memo(cwd, &home, &default_args(&["note", text])));
+    }
+    let log = home.join("data/memo/stores/default/notes.log");
+    let mut bytes = fs::read(&log).unwrap();
+    bytes[320 + 2] = b'9';
+    bytes.extend_from_slice(&[0; 320]);
+    fs::write(&log, &bytes).unwrap();
+
+    let error = stderr(memo(cwd, &home, &default_args(&["note", "c"])));
+    assert!(error.contains("malformed complete note record 1"));
+    assert_eq!(fs::read(&log).unwrap(), bytes);
+}
+
+#[test]
 fn append_checks_only_the_final_complete_slot_before_tail_repair() {
     let fixture = TempDir::new().unwrap();
     let home = fixture.path().join("home");
@@ -406,6 +449,26 @@ fn no_arg_nap_repairs_a_torn_summary_suffix_and_reprompts() {
         .unwrap()
         .write_all(b"torn")
         .unwrap();
+    let pending = stdout(memo(cwd, &home, &default_args(&["nap"])));
+    assert!(pending.contains("nap 2-3"));
+    assert_eq!(fs::metadata(summaries).unwrap().len(), 320);
+}
+
+#[test]
+fn zero_filled_final_summary_slot_is_repaired_and_reprompts() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let cwd = fixture.path();
+    stdout(memo(cwd, &home, &default_args(&["init"])));
+    for text in ["a", "b", "c", "d"] {
+        stdout(memo(cwd, &home, &default_args(&["note", text])));
+    }
+    stdout(memo(cwd, &home, &default_args(&["nap", "0-1", "ab"])));
+    let summaries = home.join("data/memo/stores/default/summaries/2.log");
+    let mut bytes = fs::read(&summaries).unwrap();
+    bytes.extend_from_slice(&[0; 320]);
+    fs::write(&summaries, bytes).unwrap();
+
     let pending = stdout(memo(cwd, &home, &default_args(&["nap"])));
     assert!(pending.contains("nap 2-3"));
     assert_eq!(fs::metadata(summaries).unwrap().len(), 320);

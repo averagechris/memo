@@ -210,16 +210,31 @@ fn open_repaired(
         .open(path)
         .with_context(|| format!("open {}", path.display()))?;
     let len = file.metadata()?.len();
-    let complete = len / RECORD_BYTES * RECORD_BYTES;
-    if complete > 0 {
-        validate_last(&mut file, complete / RECORD_BYTES - 1)?;
+    let complete_slots = len / RECORD_BYTES;
+    let mut repair_at = complete_slots;
+    if complete_slots > 0 {
+        let final_index = complete_slots - 1;
+        if is_zero_slot(&read_slot(&mut file, final_index)?) {
+            // A crash can leave one or more unwritten full slots. Scan the
+            // contiguous zero suffix once, then validate its predecessor
+            // before changing the file. The scan is bounded by the file.
+            while repair_at > 0 && is_zero_slot(&read_slot(&mut file, repair_at - 1)?) {
+                repair_at -= 1;
+            }
+            if repair_at > 0 {
+                validate_last(&mut file, repair_at - 1)?;
+            }
+        } else {
+            validate_last(&mut file, final_index)?;
+        }
     }
-    if len != complete {
-        file.set_len(complete)
+    let repaired_len = repair_at * RECORD_BYTES;
+    if len != repaired_len {
+        file.set_len(repaired_len)
             .with_context(|| format!("repair torn suffix in {}", path.display()))?;
         file.sync_all()?;
     }
-    file.seek(SeekFrom::Start(complete))?;
+    file.seek(SeekFrom::Start(repaired_len))?;
     Ok((file, !existed))
 }
 
@@ -275,6 +290,10 @@ fn read_slot(file: &mut File, index: u64) -> Result<[u8; RECORD_BYTES as usize]>
     let mut slot = [0; RECORD_BYTES as usize];
     file.read_exact(&mut slot)?;
     Ok(slot)
+}
+
+fn is_zero_slot(slot: &[u8; RECORD_BYTES as usize]) -> bool {
+    slot.iter().all(|byte| *byte == 0)
 }
 
 fn slot_body(slot: &[u8; RECORD_BYTES as usize]) -> Result<&str> {
