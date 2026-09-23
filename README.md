@@ -17,7 +17,23 @@ memo note "one line"
 memo wake --lines 96
 memo nap                           # print the next eligible, store-pinned request
 memo nap 0-1 "summary"
+memo skills                       # print the bundled OpenCode skill
+memo skills install               # install it globally for OpenCode
+memo completions zsh              # print shell completions
+memo completions install fish     # install shell completions
 ```
+
+`memo skills install [--dir DIR] [--force]` writes only
+`DIR/memo/SKILL.md`; its default root is
+`${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills`. The directory name `memo`
+is the OpenCode skill ID.
+
+Completion installs use `${XDG_DATA_HOME:-$HOME/.local/share}` for Bash
+(`bash-completion/completions/memo`) and Zsh (`zsh/site-functions/_memo`), and
+`${XDG_CONFIG_HOME:-$HOME/.config}` for Fish (`fish/completions/memo.fish`). Zsh
+users may need to add that site-functions directory to `fpath`. Elvish and
+PowerShell require `--dir`; memo never edits shell configuration. In all cases,
+`--dir` names the destination directory and existing files require `--force`.
 
 `where` never creates storage and reports an absent selected store as
 `initialized: false`; this diagnostic command is the exception to the normal

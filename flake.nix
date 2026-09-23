@@ -86,6 +86,16 @@
         version = package.version;
         src = lib.cleanSource ./.;
         cargoLock.lockFile = ./Cargo.lock;
+        nativeBuildInputs = [pkgs.installShellFiles];
+
+        postInstall = lib.optionalString (pkgs.stdenv.buildPlatform.canExecute pkgs.stdenv.hostPlatform) ''
+          $out/bin/memo completions bash > memo.bash
+          $out/bin/memo completions zsh > _memo
+          $out/bin/memo completions fish > memo.fish
+          installShellCompletion --bash --name memo memo.bash
+          installShellCompletion --zsh _memo
+          installShellCompletion --fish memo.fish
+        '';
 
         meta = {
           description = package.description;

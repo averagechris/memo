@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -76,6 +77,82 @@ fn default_args<'a>(extra: &'a [&'a str]) -> Vec<&'a str> {
     let mut args = vec!["--store", "default"];
     args.extend_from_slice(extra);
     args
+}
+
+#[test]
+fn skill_commands_are_embedded_installable_and_memory_independent() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let cwd = fixture.path().join("broken");
+    fs::create_dir_all(cwd.join(".jj")).unwrap();
+    fs::create_dir_all(home.join("config/memo")).unwrap();
+    fs::write(home.join("config/memo/config.toml"), "not toml = [").unwrap();
+
+    let bundled = include_str!("../skills/memo/SKILL.md");
+    assert_eq!(stdout(memo(&cwd, &home, &["skills"])), bundled);
+    assert_eq!(stdout(memo(&cwd, &home, &["skills", "show"])), bundled);
+    stdout(memo(&cwd, &home, &["skills", "install"]));
+    let installed = home.join("config/opencode/skills/memo/SKILL.md");
+    assert_eq!(fs::read_to_string(&installed).unwrap(), bundled);
+    assert!(stderr(memo(&cwd, &home, &["skills", "install"])).contains("refusing to overwrite"));
+
+    let custom = fixture.path().join("custom");
+    stdout(memo(
+        &cwd,
+        &home,
+        &["skills", "install", "--dir", custom.to_str().unwrap()],
+    ));
+    assert_eq!(
+        fs::read_to_string(custom.join("memo/SKILL.md")).unwrap(),
+        bundled
+    );
+
+    let outside = fixture.path().join("outside");
+    fs::write(&outside, "keep").unwrap();
+    fs::remove_file(&installed).unwrap();
+    symlink(&outside, &installed).unwrap();
+    stdout(memo(&cwd, &home, &["skills", "install", "--force"]));
+    assert_eq!(fs::read_to_string(outside).unwrap(), "keep");
+    assert_eq!(fs::read_to_string(installed).unwrap(), bundled);
+}
+
+#[test]
+fn completion_commands_generate_and_install_shell_filenames() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let cwd = fixture.path().join("broken");
+    fs::create_dir_all(cwd.join(".jj")).unwrap();
+    fs::create_dir_all(home.join("config/memo")).unwrap();
+    fs::write(home.join("config/memo/config.toml"), "broken = [").unwrap();
+
+    for shell in ["bash", "zsh", "fish", "elvish", "powershell"] {
+        let script = stdout(memo(&cwd, &home, &["completions", shell]));
+        assert!(script.contains("memo"), "empty {shell} completion");
+    }
+    for (shell, path) in [
+        ("bash", "data/bash-completion/completions/memo"),
+        ("fish", "config/fish/completions/memo.fish"),
+        ("zsh", "data/zsh/site-functions/_memo"),
+    ] {
+        stdout(memo(&cwd, &home, &["completions", "install", shell]));
+        assert!(home.join(path).is_file(), "missing {path}");
+    }
+    assert!(
+        stderr(memo(&cwd, &home, &["completions", "install", "elvish"])).contains("requires --dir")
+    );
+    let custom = fixture.path().join("completions");
+    stdout(memo(
+        &cwd,
+        &home,
+        &[
+            "completions",
+            "install",
+            "powershell",
+            "--dir",
+            custom.to_str().unwrap(),
+        ],
+    ));
+    assert!(custom.join("_memo.ps1").is_file());
 }
 
 #[test]

@@ -4,7 +4,8 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use clap::{ArgAction, Parser, Subcommand};
+use clap::{ArgAction, CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 use fs2::FileExt;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -12,6 +13,7 @@ use sha2::{Digest, Sha256};
 const FORMAT_MARKER: &str = "FORMAT_VERSION";
 const RECORD_BYTES: u64 = 320;
 const MAX_TEXT_BYTES: usize = 280;
+const BUNDLED_SKILL: &str = include_str!("../skills/memo/SKILL.md");
 
 #[derive(Debug, Parser)]
 #[command(name = "memo", version, about)]
@@ -34,6 +36,16 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Show or install the bundled OpenCode skill.
+    Skills {
+        #[command(subcommand)]
+        command: Option<SkillsCommand>,
+    },
+    /// Generate or install shell completions.
+    Completions {
+        #[command(subcommand)]
+        command: CompletionsCommand,
+    },
     /// Show the selected store without creating it.
     Where,
     /// Initialize the selected store.
@@ -49,6 +61,39 @@ enum Command {
     Nap {
         span: Option<String>,
         summary: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SkillsCommand {
+    /// Print the bundled skill.
+    Show,
+    /// Install the bundled skill.
+    Install {
+        /// OpenCode skills directory (the memo subdirectory is added).
+        #[arg(long)]
+        dir: Option<PathBuf>,
+        /// Replace an existing skill file.
+        #[arg(long)]
+        force: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum CompletionsCommand {
+    /// Print a completion script.
+    #[command(external_subcommand)]
+    Generate(Vec<String>),
+    /// Install a completion script.
+    Install {
+        #[arg(value_enum)]
+        shell: Shell,
+        /// Destination directory (the shell-specific filename is added).
+        #[arg(long)]
+        dir: Option<PathBuf>,
+        /// Replace an existing completion file.
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -84,6 +129,15 @@ fn main() -> Result<()> {
 }
 
 fn run(cli: Cli, cwd: &Path, out: &mut dyn Write) -> Result<()> {
+    match &cli.command {
+        Some(Command::Skills { command }) => {
+            return run_skills(command.as_ref(), cwd, out);
+        }
+        Some(Command::Completions { command }) => {
+            return run_completions(command, cwd, out);
+        }
+        _ => {}
+    }
     let executable = env::current_exe().context("resolve current executable")?;
     let config = read_config()?;
     let auto_project = if cli.auto_project {
@@ -98,6 +152,7 @@ fn run(cli: Cli, cwd: &Path, out: &mut dyn Write) -> Result<()> {
     let initialized = marker_initialized(&selection.path)?;
 
     match cli.command.unwrap_or(Command::Where) {
+        Command::Skills { .. } | Command::Completions { .. } => unreachable!(),
         Command::Where => print_selection(out, &selection, initialized),
         Command::Init => {
             create_dir_all_synced(&selection.path)
@@ -141,6 +196,117 @@ fn run(cli: Cli, cwd: &Path, out: &mut dyn Write) -> Result<()> {
             )
         }
     }
+}
+
+fn run_skills(command: Option<&SkillsCommand>, cwd: &Path, out: &mut dyn Write) -> Result<()> {
+    match command {
+        None | Some(SkillsCommand::Show) => {
+            out.write_all(BUNDLED_SKILL.as_bytes()).map_err(Into::into)
+        }
+        Some(SkillsCommand::Install { dir, force }) => {
+            let base = match dir {
+                Some(path) => absolute_destination(path, cwd),
+                None => absolute_env_path("XDG_CONFIG_HOME")
+                    .or_else(|| absolute_env_path("HOME").map(|p| p.join(".config")))
+                    .context("HOME or XDG_CONFIG_HOME must be set (or pass --dir)")?
+                    .join("opencode/skills"),
+            };
+            let path = base.join("memo/SKILL.md");
+            safe_write(&path, BUNDLED_SKILL.as_bytes(), *force)?;
+            writeln!(out, "installed {}", path.display())?;
+            Ok(())
+        }
+    }
+}
+
+fn run_completions(command: &CompletionsCommand, cwd: &Path, out: &mut dyn Write) -> Result<()> {
+    match command {
+        CompletionsCommand::Generate(values) => {
+            if values.len() != 1 {
+                bail!("completions requires a shell")
+            }
+            let shell: Shell = values[0]
+                .parse()
+                .map_err(|_| anyhow::anyhow!("unsupported shell {}", values[0]))?;
+            generate_completion(shell, out)
+        }
+        CompletionsCommand::Install { shell, dir, force } => {
+            let (default_dir, filename) = completion_destination(*shell)?;
+            let base = dir
+                .as_ref()
+                .map(|p| absolute_destination(p, cwd))
+                .or(default_dir)
+                .context("Elvish and PowerShell completion installation requires --dir")?;
+            let mut bytes = Vec::new();
+            generate_completion(*shell, &mut bytes)?;
+            let path = base.join(filename);
+            safe_write(&path, &bytes, *force)?;
+            writeln!(out, "installed {}", path.display())?;
+            if *shell == Shell::Zsh {
+                writeln!(out, "ensure {} is in your zsh fpath", base.display())?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn generate_completion(shell: Shell, out: &mut dyn Write) -> Result<()> {
+    let mut command = Cli::command();
+    clap_complete::generate(shell, &mut command, "memo", out);
+    Ok(())
+}
+
+fn completion_destination(shell: Shell) -> Result<(Option<PathBuf>, &'static str)> {
+    let home = absolute_env_path("HOME");
+    let config =
+        absolute_env_path("XDG_CONFIG_HOME").or_else(|| home.clone().map(|p| p.join(".config")));
+    let data = absolute_env_path("XDG_DATA_HOME").or_else(|| home.map(|p| p.join(".local/share")));
+    Ok(match shell {
+        Shell::Bash => (data.map(|p| p.join("bash-completion/completions")), "memo"),
+        Shell::Fish => (config.map(|p| p.join("fish/completions")), "memo.fish"),
+        Shell::Zsh => (data.map(|p| p.join("zsh/site-functions")), "_memo"),
+        Shell::Elvish => (None, "memo.elv"),
+        Shell::PowerShell => (None, "_memo.ps1"),
+        _ => bail!("unsupported shell"),
+    })
+}
+
+fn absolute_destination(path: &Path, cwd: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    }
+}
+
+fn safe_write(path: &Path, contents: &[u8], force: bool) -> Result<()> {
+    if let Ok(metadata) = fs::symlink_metadata(path) {
+        if !force {
+            bail!("refusing to overwrite {}; pass --force", path.display())
+        }
+        if metadata.is_dir() {
+            bail!("refusing to replace directory {}", path.display())
+        }
+        fs::remove_file(path).with_context(|| format!("remove {}", path.display()))?;
+    }
+    let parent = path.parent().context("destination has no parent")?;
+    fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    let temporary = parent.join(format!(".memo-install-{}", std::process::id()));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .with_context(|| format!("create {}", temporary.display()))?;
+    let result = (|| -> Result<()> {
+        file.write_all(contents)?;
+        file.sync_all()?;
+        fs::rename(&temporary, path)?;
+        sync_directory(parent)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 fn require_initialized(selection: &Selection, executable: &Path) -> Result<()> {
