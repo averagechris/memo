@@ -39,7 +39,7 @@
         srhtRepo = "memo";
         versionMode = "package";
         versionFile = "Cargo.toml";
-        lockPackages = ["memo-cli"];
+        lockPackages = ["memo"];
       };
     mkToolApp = system: name: runtimeInputs: text: let
       pkgs = pkgsFor system;

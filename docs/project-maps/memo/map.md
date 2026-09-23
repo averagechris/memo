@@ -15,8 +15,9 @@ The XDG data root lives under the tool name, with an override. Personal data sta
 outside project VCS. The project must not automate Git, publish to SourceHut, or
 copy source or prompts from an upstream project that has no declared license.
 
-The Cargo package is `memo-cli` because `memo` is occupied on crates.io; the
-binary and repository remain `memo`. No publication is authorized.
+The Cargo package, binary, and repository are all `memo`. The name `memo` is
+already occupied on crates.io, so do not publish this package there; the local
+Cargo package name remains `memo`. No publication is authorized.
 
 Decision frontier: [issues/](issues/)
 
@@ -31,7 +32,7 @@ The staged route is in the [first-slice delivery plan](delivery-plan.md).
 - [Read and summary boundaries](issues/03-read-and-summary-boundaries.md): Ordinary reads use one selected store; a later labeled combined wake is opt-in and never persists a mixed summary.
 - [Privacy and publication boundary](issues/04-privacy-and-publication-boundary.md): Keep personal data outside VCS and avoid automatic Git, SourceHut, upstream-source, and upstream-prompt actions.
 - [Project identity](issues/05-project-identity-across-workspaces.md): Hash the namespaced canonical shared VCS metadata path; shared workspaces match, while moving a repository changes identity.
-- [Package name and release path](issues/09-package-name-and-release-path.md): Use Cargo package `memo-cli` with binary/fleet identity `memo`; do not publish as part of this work.
+- [Package name and release path](issues/09-package-name-and-release-path.md): Use `memo` for the local Cargo package, binary, and fleet identity; do not publish to crates.io as part of this work because `memo` is occupied there.
 - [Durable layout and crash repair](issues/06-layout-and-crash-repair.md): Use locked, fsynced 320-byte append-only records, truncate only torn suffixes, and reject malformed complete records.
 
 ## Not yet specified

@@ -1,7 +1,7 @@
 # memo
 
-`memo` is a local, personal-memory CLI for AI-agent workflows. The Cargo package
-is `memo-cli`; the installed executable is `memo`.
+`memo` is a local, personal-memory CLI for AI-agent workflows. The Cargo package and installed executable are both `memo`. The package is not
+intended for crates.io publication because `memo` is already occupied there.
 
 ## Current commands
 

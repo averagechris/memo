@@ -6,21 +6,20 @@ Blocked by: none
 
 ## Question
 
-The repository currently declares package and binary name `memo`, while the
-working assumption is that `memo-cli` may be needed because `memo` is occupied on
-crates.io. Before any publication, should the Cargo package keep `memo` or use a
-distinct package name such as `memo-cli`, and what verification and release path
-should establish that choice without publishing during discovery? Verify the
-registry state, package/binary naming relationship, release artifact expectations,
-and the existing repository release workflow before choosing.
+The repository uses the package and binary name `memo`. The name `memo` is
+already occupied on crates.io, so this work must not publish a crate there. The
+local package name remains `memo`; verify the package/binary naming relationship,
+release artifact expectations, and existing repository release workflow without
+publishing during discovery.
 
 ## Answer
 
-The Cargo package is `memo-cli`, because `memo` is occupied on crates.io. The
-binary, repository, and fleet identities remain `memo`; Nix's Cargo lock-package
-selection uses `memo-cli`. The normal repository checks and release-artifact
-workflow verify that relationship. This decision does not authorize or perform
-publication.
+The Cargo package, binary, repository, and fleet identities are all `memo`.
+The name `memo` is already occupied on crates.io, so do not publish this package
+there; that does not prevent using `memo` as the local Cargo package name. Nix's
+Cargo lock-package selection uses `memo`. The normal repository checks and
+release-artifact workflow verify that relationship. This decision does not
+authorize or perform publication.
 
 ## Delivery links
 
