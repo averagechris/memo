@@ -1,66 +1,66 @@
 Output docs/demo.gif
 
 Set Shell "bash"
-Set FontSize 18
-Set Width 1400
-Set Height 820
-Set Padding 24
+Set FontSize 19
+Set Width 1200
+Set Height 560
+Set Padding 20
 Set Framerate 24
 Set PlaybackSpeed 1
-Set TypingSpeed 20ms
+Set TypingSpeed 12ms
 Set Theme { "name": "Catppuccin Mocha", "black": "#45475a", "red": "#f38ba8", "green": "#a6e3a1", "yellow": "#f9e2af", "blue": "#89b4fa", "magenta": "#cba6f7", "cyan": "#94e2d5", "white": "#bac2de", "brightBlack": "#585b70", "brightRed": "#f38ba8", "brightGreen": "#a6e3a1", "brightYellow": "#f9e2af", "brightBlue": "#89b4fa", "brightMagenta": "#cba6f7", "brightCyan": "#94e2d5", "brightWhite": "#cdd6f4", "background": "#1e1e2e", "foreground": "#cdd6f4", "selection": "#585b70", "cursor": "#f5e0dc" }
 
 Hide
 Type "export PS1='$ '"
 Enter
+Type "memo --store demo init >/dev/null"
+Enter
 Type "clear"
 Enter
 Show
-Type "# Save two facts from today's work"
-Sleep 1s
+Type "# Four notes stay in the raw log"
 Enter
-Type "memo --store demo init"
-Enter
-Sleep 1s
 Type "memo --store demo note 'Use one shared request ID in API logs and traces'"
 Enter
+Type "memo --store demo note 'Include that request ID in every downstream call'"
+Enter
 Sleep 1s
+Type "memo --store demo nap 0-1 'Use one request ID across logs, traces, and downstream calls'"
+Enter
 Type "memo --store demo note 'Run the focused checkout test before the full suite'"
 Enter
-Sleep 2s
+Type "memo --store demo note 'Keep the regression fixture scoped to checkout behavior'"
+Enter
+Sleep 1s
+Type "memo --store demo nap 2-3 'Run focused checkout tests with a scoped regression fixture first'"
+Enter
+Sleep 1s
 
 Hide
 Type "clear"
 Enter
 Show
-Type "# A one-line wake needs an agent-supplied summary"
+Type "# Pair summaries become the sources for one root"
+Enter
+Type "memo --store demo nap"
+Enter
+Sleep 2s
+Type "memo --store demo nap 0-3 'Keep request IDs consistent and run focused checkout tests first'"
+Enter
 Sleep 1s
+
+Hide
+Type "clear"
+Enter
+Show
+Type "# The line budget chooses root, pair summaries, or original notes"
 Enter
 Type "memo --store demo wake --lines 1"
 Enter
-Sleep 5s
-
-Hide
-Type "clear"
-Enter
-Show
-Type "# The agent groups both sources into one faithful line"
-Sleep 1s
-Enter
-Type "memo --store demo nap 0-1 'Keep request IDs consistent and run focused tests first'"
-Enter
 Sleep 2s
-Type "memo --store demo wake --lines 1"
-Enter
-Sleep 4s
-
-Hide
-Type "clear"
-Enter
-Show
-Type "# Summaries save context. The original notes remain."
-Sleep 1s
-Enter
 Type "memo --store demo wake --lines 2"
 Enter
-Sleep 5s
+Sleep 2s
+Type "memo --store demo wake --lines 4"
+Enter
+Sleep 6s

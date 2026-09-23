@@ -11,7 +11,7 @@ fi
 
 cargo build -q --manifest-path "$repo_root/Cargo.toml"
 
-demo_root=$(mktemp -d "${TMPDIR:-/tmp}/memo-demo.XXXXXX")
+demo_root=$(mktemp -d "${MEMO_DEMO_TMPDIR:-${TMPDIR:-/tmp}}/memo-demo.XXXXXX")
 cleanup() {
   rm -rf "$demo_root"
 }
@@ -27,10 +27,15 @@ export MEMO_DATA_DIR="$demo_root/memo-data"
 export PATH="$demo_root/bin:$PATH"
 
 cd "$repo_root"
-rm -f docs/demo.gif
+if [[ -f docs/demo.gif ]]; then
+  cp docs/demo.gif "$demo_root/previous-demo.gif"
+fi
 "$vhs_bin" docs/demo.tape
 
 if [[ ! -s docs/demo.gif ]] || [[ $(LC_ALL=C head -c 6 docs/demo.gif) != "GIF89a" ]]; then
+  if [[ -f "$demo_root/previous-demo.gif" ]]; then
+    cp "$demo_root/previous-demo.gif" docs/demo.gif
+  fi
   echo "error: VHS did not produce a GIF89a demo" >&2
   exit 1
 fi
