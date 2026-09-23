@@ -11,9 +11,19 @@ fi
 
 cargo build -q --manifest-path "$repo_root/Cargo.toml"
 
-demo_root=$(mktemp -d "${MEMO_DEMO_TMPDIR:-${TMPDIR:-/tmp}}/memo-demo.XXXXXX")
+demo_root=$(mktemp -d "${MEMO_DEMO_TMPDIR:-${TMPDIR:-/tmp}}/m.XXXXXX")
+render_ok=false
 cleanup() {
+  status=$?
+  if [[ "$render_ok" != true ]]; then
+    if [[ -f "$demo_root/previous-demo.gif" ]]; then
+      cp "$demo_root/previous-demo.gif" docs/demo.gif
+    else
+      rm -f docs/demo.gif
+    fi
+  fi
   rm -rf "$demo_root"
+  exit "$status"
 }
 trap cleanup EXIT
 
@@ -23,7 +33,7 @@ cp "$repo_root/target/debug/memo" "$demo_root/bin/memo"
 export HOME="$demo_root/home"
 export XDG_DATA_HOME="$demo_root/xdg-data"
 export XDG_CONFIG_HOME="$demo_root/xdg-config"
-export MEMO_DATA_DIR="$demo_root/memo-data"
+export MEMO_DATA_DIR="$demo_root/data"
 export PATH="$demo_root/bin:$PATH"
 
 cd "$repo_root"
@@ -33,9 +43,6 @@ fi
 "$vhs_bin" docs/demo.tape
 
 if [[ ! -s docs/demo.gif ]] || [[ $(LC_ALL=C head -c 6 docs/demo.gif) != "GIF89a" ]]; then
-  if [[ -f "$demo_root/previous-demo.gif" ]]; then
-    cp "$demo_root/previous-demo.gif" docs/demo.gif
-  fi
   echo "error: VHS did not produce a GIF89a demo" >&2
   exit 1
 fi
@@ -55,4 +62,5 @@ if [[ ! "$dimensions" =~ ^[1-9][0-9]*x[1-9][0-9]*$ ]] ||
   exit 1
 fi
 
+render_ok=true
 echo "rendered docs/demo.gif ($dimensions, $frames frames)"

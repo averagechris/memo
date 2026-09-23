@@ -17,23 +17,32 @@ Type "memo --store demo init >/dev/null"
 Enter
 Type "clear"
 Enter
+Sleep 1s
 Show
+Sleep 500ms
 Type "# Four notes stay in the raw log"
 Enter
+Sleep 500ms
 Type "memo --store demo note 'Use one shared request ID in API logs and traces'"
 Enter
+Sleep 500ms
 Type "memo --store demo note 'Include that request ID in every downstream call'"
 Enter
+Sleep 500ms
 Sleep 1s
 Type "memo --store demo nap 0-1 'Use one request ID across logs, traces, and downstream calls'"
 Enter
+Sleep 500ms
 Type "memo --store demo note 'Run the focused checkout test before the full suite'"
 Enter
+Sleep 500ms
 Type "memo --store demo note 'Keep the regression fixture scoped to checkout behavior'"
 Enter
+Sleep 500ms
 Sleep 1s
 Type "memo --store demo nap 2-3 'Run focused checkout tests with a scoped regression fixture first'"
 Enter
+Sleep 500ms
 Sleep 1s
 
 Hide
