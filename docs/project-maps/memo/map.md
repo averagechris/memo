@@ -7,17 +7,16 @@ implementation, publication, or release.
 
 ## Notes
 
-The repository is currently a bootstrap Rust executable. `Cargo.toml` names the
-package and binary `memo`, and `src/main.rs` only prints a hello response. No
-first-slice implementation has been done.
+The repository now provides `memo where` and `memo init`, store selection,
+repository identity, and the version-1 initialization marker. Memory commands
+and their durable record layout remain future work.
 
 The XDG data root lives under the tool name, with an override. Personal data stays
 outside project VCS. The project must not automate Git, publish to SourceHut, or
 copy source or prompts from an upstream project that has no declared license.
 
-The current Cargo package name is provisional. The package may need to be
-`memo-cli` because `memo` is occupied on crates.io, but that needs a release
-decision before any publication.
+The Cargo package is `memo-cli` because `memo` is occupied on crates.io; the
+binary and repository remain `memo`. No publication is authorized.
 
 Decision frontier: [issues/](issues/)
 
@@ -31,6 +30,8 @@ The staged route is in the [first-slice delivery plan](delivery-plan.md).
 - [Project markers and initialization](issues/02-project-markers-and-initialization.md): A recognized project marker with no initialized store is an error; only `init` creates a project store.
 - [Read and summary boundaries](issues/03-read-and-summary-boundaries.md): Ordinary reads use one selected store; a later labeled combined wake is opt-in and never persists a mixed summary.
 - [Privacy and publication boundary](issues/04-privacy-and-publication-boundary.md): Keep personal data outside VCS and avoid automatic Git, SourceHut, upstream-source, and upstream-prompt actions.
+- [Project identity](issues/05-project-identity-across-workspaces.md): Hash the namespaced canonical shared VCS metadata path; shared workspaces match, while moving a repository changes identity.
+- [Package name and release path](issues/09-package-name-and-release-path.md): Use Cargo package `memo-cli` with binary/fleet identity `memo`; do not publish as part of this work.
 
 ## Not yet specified
 

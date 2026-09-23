@@ -1,7 +1,7 @@
 # Package name and release path
 
 Type: grilling
-Status: open
+Status: resolved
 Blocked by: none
 
 ## Question
@@ -15,6 +15,12 @@ registry state, package/binary naming relationship, release artifact expectation
 and the existing repository release workflow before choosing.
 
 ## Answer
+
+The Cargo package is `memo-cli`, because `memo` is occupied on crates.io. The
+binary, repository, and fleet identities remain `memo`; Nix's Cargo lock-package
+selection uses `memo-cli`. The normal repository checks and release-artifact
+workflow verify that relationship. This decision does not authorize or perform
+publication.
 
 ## Delivery links
 

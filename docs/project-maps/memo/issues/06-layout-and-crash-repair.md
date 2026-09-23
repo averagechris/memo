@@ -12,6 +12,11 @@ data root without creating an uninitialized store during selection?
 
 ## Answer
 
+The first implementation slice reserves an idempotently created
+`FORMAT_VERSION` file containing `1` as the store initialization marker. No raw
+log or durable record schema is chosen yet; those layout and repair decisions
+remain open.
+
 ## Delivery links
 
 - [First-slice delivery plan](../delivery-plan.md)
