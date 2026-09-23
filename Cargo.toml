@@ -2,7 +2,7 @@
 name = "memo"
 version = "0.1.0"
 edition = "2024"
-description = "Persistent short notes and bounded wake summaries for AI-agent workflows"
+description = "Keep decisions, environment quirks, and workflow lessons across agent sessions"
 authors = ["Christopher Cummings"]
 license = "MIT"
 repository = "https://git.sr.ht/~averagechris/memo"

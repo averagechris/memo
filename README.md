@@ -1,7 +1,16 @@
 # memo
 
-`memo` is a local, personal-memory CLI for AI-agent workflows. The Cargo package and installed executable are both `memo`. The package is not
-intended for crates.io publication because `memo` is already occupied there.
+`memo` keeps short, local context between agent sessions and human work. Use
+`note` to save a decision, environment quirk, or workflow lesson, `wake` to
+retrieve a bounded context window, and `nap` to record the summary an agent
+supplies when `wake` asks for one. `memo` makes no model calls.
+
+In a repository, `memo` selects a private project store in its data directory.
+That keeps project facts separate from cross-project facts. Use
+`--store default` for a preference or other fact that should follow you across
+projects. The Cargo package and installed executable are both `memo`. The
+package is not intended for crates.io publication because `memo` is already
+occupied there.
 
 ## Current commands
 
@@ -42,7 +51,7 @@ items, and install paths rather than wrapping rendered prose.
 memo -o json --store default where
 # {"command":"where","ok":true,"store":{"initialized":false,"kind":"default",...}}
 
-memo note "Prefer focused tests" --output-format json
+memo --store default note "Prefer focused tests" --output-format json
 # {"command":"note","ok":true,"id":0,"text":"Prefer focused tests",...}
 ```
 
@@ -52,11 +61,12 @@ The pending request's `command` is executable- and store-pinned.
 
 ## Project map
 
+The [memo project map](docs/project-maps/memo/map.md) records the storage and
+command boundaries behind this first slice.
+
 The output-format boundary is resolved in the CLI child: storage operations
 return typed outcomes, and only the command edge chooses text rendering or
 structured JSON, preserving the version-1 record and locking implementation.
-
-Named project work is tracked in the [memo project tracker](https://todo.sr.ht/~averagechris/projects?search=repo%3Amemo).
 
 `memo skills install [NAME] [--dir DIR] [--force]` installs one named skill, or
 all bundled skills when NAME is omitted. Currently it writes only
@@ -124,6 +134,3 @@ direnv allow   # or: nix develop
 cargo test -q
 nix run .#static-checks
 ```
-
-Work is tracked at <https://todo.sr.ht/~averagechris/projects> with the
-`repo:memo` label.

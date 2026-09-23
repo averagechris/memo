@@ -21,9 +21,9 @@ const BUNDLED_SKILL: &str = include_str!("../skills/memo/SKILL.md");
 #[command(
     name = "memo",
     version,
-    about = "Keep short persistent notes for agent workflows",
-    long_about = "Keep short persistent notes for agent workflows. Agents supply summaries with `nap`; `wake` reads a bounded view using those summaries. A project store is selected automatically inside a Git or jj repository; use `--store default` for notes that should follow you across projects.",
-    after_help = "Examples:\n  memo --store default init\n  memo note \"Prefer focused tests\"\n  memo wake --lines 24\n  memo where"
+    about = "Keep decisions, environment quirks, and workflow lessons across agent sessions",
+    long_about = "memo keeps short, local context that agents and people can carry between sessions. Use `note` for a decision, environment quirk, or workflow lesson; `wake` retrieves a bounded context window; `nap` records the summary an agent supplies when `wake` asks for one. A repository gets a private project store in memo's data directory; use `--store default` for facts shared across projects. memo makes no model calls.",
+    after_help = "Examples:\n  memo init\n  memo note \"The API requires an idempotency key\"\n  memo wake --lines 24\n  memo nap\n  memo --store default init\n  memo --store default note \"Prefer focused tests\""
 )]
 struct Cli {
     /// Choose human-readable text or structured JSON output.

@@ -334,7 +334,7 @@ fn config_and_flags_control_auto_selection() {
 }
 
 #[test]
-fn bare_invocation_is_read_only_help_even_with_broken_configuration() {
+fn help_is_read_only_and_explains_the_memory_loop() {
     let fixture = TempDir::new().unwrap();
     let home = fixture.path().join("home");
     let cwd = fixture.path().join("broken");
@@ -345,8 +345,27 @@ fn bare_invocation_is_read_only_help_even_with_broken_configuration() {
     for word in ["note", "wake", "nap"] {
         assert!(help.contains(word));
     }
+    assert!(help.contains("-o"));
     assert!(!home.join("data").exists());
     assert!(!help.contains("written in Rust"));
+
+    let explicit_help = stdout(memo(&cwd, &home, &["--help"]));
+    for word in [
+        "decision",
+        "environment",
+        "workflow",
+        "sessions",
+        "note",
+        "wake",
+        "nap",
+        "project",
+        "default",
+        "model calls",
+    ] {
+        assert!(explicit_help.contains(word));
+    }
+    assert!(explicit_help.contains("-o"));
+    assert!(!explicit_help.contains("written in Rust"));
 }
 
 #[test]
