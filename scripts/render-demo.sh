@@ -27,14 +27,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$demo_root/bin" "$demo_root/home" "$demo_root/xdg-data" "$demo_root/xdg-config"
-cp "$repo_root/target/debug/memo" "$demo_root/bin/memo"
+mkdir -p "$demo_root/home" "$demo_root/xdg-data" "$demo_root/xdg-config"
+cp "$repo_root/target/debug/memo" "$demo_root/memo"
 
 export HOME="$demo_root/home"
 export XDG_DATA_HOME="$demo_root/xdg-data"
 export XDG_CONFIG_HOME="$demo_root/xdg-config"
 export MEMO_DATA_DIR="$demo_root/data"
-export PATH="$demo_root/bin:$PATH"
+export PATH="$demo_root:$PATH"
 
 cd "$repo_root"
 if [[ -f docs/demo.gif ]]; then
