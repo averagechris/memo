@@ -14,7 +14,7 @@ const FORMAT_MARKER: &str = "FORMAT_VERSION";
 #[command(name = "memo", version, about)]
 struct Cli {
     /// Root directory containing memo stores.
-    #[arg(long, env = "MEMO_DATA_DIR", global = true)]
+    #[arg(long, env = "MEMO_DATA_DIR", global = true, value_parser = parse_data_dir)]
     data_dir: Option<PathBuf>,
     /// Select the default, project, or a named store.
     #[arg(long, global = true)]
@@ -77,7 +77,7 @@ fn run(cli: Cli, cwd: &Path, out: &mut dyn Write) -> Result<()> {
     };
     let root = absolute_data_root(cli.data_dir, cwd)?;
     let selection = select(&root, cwd, cli.store.as_deref(), auto_project)?;
-    let initialized = selection.path.join(FORMAT_MARKER).is_file();
+    let initialized = marker_initialized(&selection.path)?;
 
     match cli.command.unwrap_or(Command::Where) {
         Command::Where => print_selection(out, &selection, initialized),
@@ -91,7 +91,9 @@ fn run(cli: Cli, cwd: &Path, out: &mut dyn Write) -> Result<()> {
                 .open(&marker)
             {
                 Ok(mut file) => file.write_all(b"1\n")?,
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    marker_initialized(&selection.path)?;
+                }
                 Err(error) => {
                     return Err(error).with_context(|| format!("create {}", marker.display()));
                 }
@@ -113,10 +115,44 @@ fn print_selection(out: &mut dyn Write, selection: &Selection, initialized: bool
     Ok(())
 }
 
-fn read_config() -> Result<Config> {
-    let home = env::var_os("HOME").map(PathBuf::from);
-    let path = env::var_os("XDG_CONFIG_HOME")
+fn marker_initialized(store: &Path) -> Result<bool> {
+    let marker = store.join(FORMAT_MARKER);
+    let metadata = match fs::metadata(&marker) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error).with_context(|| format!("inspect {}", marker.display())),
+    };
+    if !metadata.is_file() {
+        bail!("format marker is not a regular file: {}", marker.display())
+    }
+    let contents = fs::read(&marker).with_context(|| format!("read {}", marker.display()))?;
+    if contents != b"1\n" {
+        bail!(
+            "unsupported or malformed format marker {}: expected exactly '1\\n'",
+            marker.display()
+        )
+    }
+    Ok(true)
+}
+
+fn parse_data_dir(value: &str) -> std::result::Result<PathBuf, String> {
+    if value.is_empty() {
+        Err("data directory cannot be empty (including MEMO_DATA_DIR)".to_owned())
+    } else {
+        Ok(PathBuf::from(value))
+    }
+}
+
+fn absolute_env_path(name: &str) -> Option<PathBuf> {
+    env::var_os(name)
+        .filter(|value| !value.is_empty())
         .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+}
+
+fn read_config() -> Result<Config> {
+    let home = absolute_env_path("HOME");
+    let path = absolute_env_path("XDG_CONFIG_HOME")
         .or_else(|| home.map(|p| p.join(".config")))
         .map(|p| p.join("memo/config.toml"));
     let Some(path) = path else {
@@ -132,9 +168,8 @@ fn read_config() -> Result<Config> {
 fn absolute_data_root(override_path: Option<PathBuf>, cwd: &Path) -> Result<PathBuf> {
     let path = override_path
         .or_else(|| {
-            env::var_os("XDG_DATA_HOME")
-                .map(PathBuf::from)
-                .or_else(|| env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+            absolute_env_path("XDG_DATA_HOME")
+                .or_else(|| absolute_env_path("HOME").map(|h| h.join(".local/share")))
                 .map(|p| p.join("memo/stores"))
         })
         .context("HOME or XDG_DATA_HOME must be set (or pass --data-dir)")?;

@@ -15,14 +15,18 @@ memo --no-auto-project where
 memo --data-dir /private/path where
 ```
 
-`where` never creates storage. `init` is idempotent and does not replace an
-existing format marker. `note`, `wake`, and `nap` are planned future commands;
+`where` never creates storage and reports an absent selected store as
+`initialized: false`; this diagnostic command is the exception to the normal
+uninitialized-store error. `init` is idempotent. An existing `FORMAT_VERSION`
+must be a regular file containing exactly `1\n`; malformed or unsupported
+markers fail both commands. `note`, `wake`, and `nap` are planned future commands;
 the current release does not store memories.
 
 ## Data layout and selection
 
-The default root is `${XDG_DATA_HOME:-$HOME/.local/share}/memo/stores`. Override
-it with `MEMO_DATA_DIR` or, with higher precedence, `--data-dir`. Stores live at:
+The default root is `${XDG_DATA_HOME:-$HOME/.local/share}/memo/stores`. Empty or
+relative XDG base-directory values are treated as unset. Override it with a
+nonempty `MEMO_DATA_DIR` or, with higher precedence, `--data-dir`. Stores live at:
 
 - `default/` for the user store;
 - `projects/<sha256-id>/` for a repository store; and

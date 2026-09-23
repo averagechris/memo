@@ -12,7 +12,9 @@ project store has not been initialized?
 ## Answer
 
 Recognition and creation are separate operations. If a project marker is present
-but its store is uninitialized, the command must return an error. Automatic
+but its store is uninitialized, commands must return an error except for the
+read-only diagnostic `where`, which reports the selected path and
+`initialized: false`. Automatic
 selection must not create files or a store as a side effect. Only `init` creates a
 project store.
 
