@@ -35,6 +35,7 @@ The staged route is in the [first-slice delivery plan](delivery-plan.md).
 - [Package name and release path](issues/09-package-name-and-release-path.md): Use `memo` for the local Cargo package and binary; do not publish to crates.io as part of this work because `memo` is occupied there.
 - [Output format contract](issues/10-output-format-contract.md): Use global `-o, --output-format text|json`, defaulting to text, with typed JSON success/error and incomplete-wake contracts while help/version remain text.
 - [Durable layout and crash repair](issues/06-layout-and-crash-repair.md): Use locked, fsynced 320-byte append-only records, truncate only torn suffixes, and reject malformed complete records.
+- [GitHub Actions CI](issues/11-github-actions-ci.md): Use GitHub Actions as the only hosted CI, with `fmt`, `clippy`, and `test` checks for pushes and pull requests targeting `main`; select branch protection required checks only after the first green run, and do not configure the retired external backend.
 
 ## Not yet specified
 

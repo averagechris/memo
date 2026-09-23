@@ -14,6 +14,12 @@ occupied there.
 
 Source code: [github.com/averagechris/memo](https://github.com/averagechris/memo)
 
+## CI
+
+GitHub Actions runs the `fmt`, `clippy`, and `test` checks on pushes to `main`
+and pull requests targeting `main`. Local Nix checks remain part of development
+verification and are not release automation.
+
 ## Current commands
 
 ```sh

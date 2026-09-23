@@ -5,16 +5,18 @@ Use `jj` for version-control actions in this repository.
 ## Hosting status
 
 - GitHub is the canonical code host: https://github.com/averagechris/memo
-- GitHub pushes currently have no CI workflow. GitHub Actions CI will be added
-  separately. Run `jj lint` and the relevant local Nix checks before handing off
-  changes.
+- GitHub Actions CI is active on pushes to `main` and pull requests targeting
+  `main`. The workflow checks are `fmt`, `clippy`, and `test`; configure branch
+  protection required checks only after the first green workflow run.
+- Run `jj lint` and the relevant local Nix checks before handing off changes.
 
 ## Development
 
 - Enter the toolchain with `direnv allow` or `nix develop`.
 - Nix formatting uses wrapped `alejandra -q`; run `nix fmt` or `nix fmt -- --check .`.
 - Prefer local checks: `nix run .#static-checks` (fmt + clippy), `nix run .#ci-test`, `nix run .#ci-machete`, `nix run .#ci-sort`, `nix run .#ci-deny`, `nix run .#ci-audit`.
-- Before handoff, run `jj lint` plus the smallest relevant checks below.
+- Before handoff, run `jj lint`, `cargo test -q`, and the smallest relevant local
+  Nix checks below. The GitHub workflow does not package the Nix derivation.
 
 ## sccache
 
@@ -25,8 +27,9 @@ server.
 
 ## Release workflow
 
-No release automation or publication process is currently defined. Do not tag
-or publish a release without an approved process.
+No release automation or publication process is currently defined. The GitHub
+workflow only runs repository checks. Do not tag or publish a release without an
+approved process.
 
 ## Issue tracking
 
