@@ -32,8 +32,8 @@
         inherit name runtimeInputs text;
       };
     ciFmt = system:
-      mkToolApp system "ci-fmt" [(pkgsFor system).alejandra] ''
-        alejandra --check .
+      mkToolApp system "ci-fmt" [(pkgsFor system).cargo (pkgsFor system).rustfmt] ''
+        cargo fmt --all -- --check
       '';
     ciClippy = system:
       mkToolApp system "ci-clippy" [(pkgsFor system).cargo (pkgsFor system).clippy] ''
