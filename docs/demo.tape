@@ -2,7 +2,7 @@ Output docs/demo.gif
 
 Set Shell "bash"
 Set FontSize 19
-Set Width 1200
+Set Width 1280
 Set Height 560
 Set Padding 20
 Set Framerate 24
